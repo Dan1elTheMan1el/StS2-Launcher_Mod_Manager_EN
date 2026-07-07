@@ -490,7 +490,7 @@ public static class LauncherPatches
         // We only sample profile1 — verifying every profile/path would balloon
         // the wait time and progress.save is the one file that actually carries
         // career state worth losing sleep over.
-        var path = ProgressSaveManager.GetProgressPathForProfile(1);
+        var path = SavePathCompat.GetProgressPathForProfile(1);
         try
         {
             bool localExists = localStore.FileExists(path);
@@ -574,19 +574,19 @@ public static class LauncherPatches
                         local,
                         cloud,
                         keepLocal,
-                        ProgressSaveManager.GetProgressPathForProfile(profile)
+                        SavePathCompat.GetProgressPathForProfile(profile)
                     );
                     await ApplyOneAsync(
                         local,
                         cloud,
                         keepLocal,
-                        RunSaveManager.GetRunSavePath(profile, "current_run.save")
+                        SavePathCompat.GetRunSavePath(profile, "current_run.save")
                     );
                     await ApplyOneAsync(
                         local,
                         cloud,
                         keepLocal,
-                        RunSaveManager.GetRunSavePath(profile, "current_run_mp.save")
+                        SavePathCompat.GetRunSavePath(profile, "current_run_mp.save")
                     );
                 }
             }

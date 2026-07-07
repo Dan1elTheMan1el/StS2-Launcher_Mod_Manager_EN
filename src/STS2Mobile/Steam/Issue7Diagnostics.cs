@@ -76,9 +76,9 @@ public static class Issue7Diagnostics
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int profile = 1; profile <= 3; profile++)
                 {
-                    var progressPath = ProgressSaveManager.GetProgressPathForProfile(profile);
-                    var runPath = RunSaveManager.GetRunSavePath(profile, "current_run.save");
-                    var runMpPath = RunSaveManager.GetRunSavePath(profile, "current_run_mp.save");
+                    var progressPath = SavePathCompat.GetProgressPathForProfile(profile);
+                    var runPath = SavePathCompat.GetRunSavePath(profile, "current_run.save");
+                    var runMpPath = SavePathCompat.GetRunSavePath(profile, "current_run_mp.save");
 
                     var progress = ProbePair(local, cloud, progressPath);
                     var run = ProbePair(local, cloud, runPath);

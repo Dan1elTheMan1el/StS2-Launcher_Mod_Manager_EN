@@ -310,10 +310,10 @@ public static class CloudSyncCoordinator
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int i = 1; i <= 3; i++)
                 {
-                    paths.Add(ProgressSaveManager.GetProgressPathForProfile(i));
-                    paths.Add(RunSaveManager.GetRunSavePath(i, "current_run.save"));
-                    paths.Add(RunSaveManager.GetRunSavePath(i, "current_run_mp.save"));
-                    paths.Add(PrefsSaveManager.GetPrefsPath(i));
+                    paths.Add(SavePathCompat.GetProgressPathForProfile(i));
+                    paths.Add(SavePathCompat.GetRunSavePath(i, "current_run.save"));
+                    paths.Add(SavePathCompat.GetRunSavePath(i, "current_run_mp.save"));
+                    paths.Add(SavePathCompat.GetPrefsPath(i));
                     AddHistoryFiles(paths, getFiles, dirExists, i);
                 }
             }
@@ -331,7 +331,7 @@ public static class CloudSyncCoordinator
         int profileId
     )
     {
-        var historyDir = RunHistorySaveManager.GetHistoryPath(profileId);
+        var historyDir = SavePathCompat.GetHistoryPath(profileId);
         if (!dirExists(historyDir))
             return;
 

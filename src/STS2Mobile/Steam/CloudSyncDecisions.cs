@@ -125,7 +125,7 @@ public static class CloudSyncDecisions
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int profile = 1; profile <= MaxProfiles; profile++)
                 {
-                    var path = ProgressSaveManager.GetProgressPathForProfile(profile);
+                    var path = SavePathCompat.GetProgressPathForProfile(profile);
 
                     int localSize = local.FileExists(path) ? GetSize(local, path) : 0;
                     int cloudSize = cloud.FileExists(path) ? cloud.GetFileSize(path) : 0;
@@ -135,7 +135,7 @@ public static class CloudSyncDecisions
                     // run on one device with empty/identical progress on the
                     // other. Without this, decision falls to NoData/Identical
                     // and the user is never prompted to sync the in-progress run.
-                    var runPath = RunSaveManager.GetRunSavePath(profile, "current_run.save");
+                    var runPath = SavePathCompat.GetRunSavePath(profile, "current_run.save");
                     int localRunSize = local.FileExists(runPath) ? GetSize(local, runPath) : 0;
                     int cloudRunSize = cloud.FileExists(runPath) ? cloud.GetFileSize(runPath) : 0;
 

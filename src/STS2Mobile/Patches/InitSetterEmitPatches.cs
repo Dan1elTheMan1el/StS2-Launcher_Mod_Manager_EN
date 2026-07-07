@@ -56,6 +56,15 @@ public static class InitSetterEmitPatches
             var shimExtType = AccessTools.TypeByName("MonoMod.Utils.Cil.ILGeneratorShimExt");
             if (shimExtType == null)
             {
+                // Load-timing gate: Apply() runs before our first harmony.Patch, so
+                // 0Harmony has not yet lazily loaded MonoMod.Utils (it pulls it in on
+                // its first DMD emit). AccessTools.TypeByName scans only already-loaded
+                // assemblies, so force MonoMod.Utils in and re-resolve.
+                if (TryForceLoadMonoModUtils())
+                    shimExtType = AccessTools.TypeByName("MonoMod.Utils.Cil.ILGeneratorShimExt");
+            }
+            if (shimExtType == null)
+            {
                 PatchHelper.Log(
                     "InitSetterEmit: MonoMod.Utils.Cil.ILGeneratorShimExt not found — init-setter fix inactive"
                 );
@@ -84,6 +93,47 @@ public static class InitSetterEmitPatches
         catch (Exception ex)
         {
             PatchHelper.Log($"InitSetterEmit: DynEmit patch failed: {ex.Message}");
+        }
+    }
+
+    // Force MonoMod.Utils into the AppDomain so the type resolve above can find it
+    // before 0Harmony would lazily load it. Prefer the AssemblyName 0Harmony
+    // references (exact version + public-key-token) so we bind the identical image
+    // it will use; fall back to a by-name load. Never throws — a failed load leaves
+    // the caller on the inactive path rather than tearing down the Apply chain.
+    private static bool TryForceLoadMonoModUtils()
+    {
+        try
+        {
+            AssemblyName target = null;
+            foreach (var an in typeof(Harmony).Assembly.GetReferencedAssemblies())
+            {
+                if (string.Equals(an.Name, "MonoMod.Utils", StringComparison.Ordinal))
+                {
+                    target = an;
+                    break;
+                }
+            }
+
+            if (target != null)
+            {
+                Assembly.Load(target);
+                PatchHelper.Log(
+                    "InitSetterEmit: MonoMod.Utils force-loaded (0Harmony ref) — retrying type resolve"
+                );
+                return true;
+            }
+
+            Assembly.Load(new AssemblyName("MonoMod.Utils"));
+            PatchHelper.Log(
+                "InitSetterEmit: MonoMod.Utils force-loaded (by-name fallback) — retrying type resolve"
+            );
+            return true;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"InitSetterEmit: MonoMod.Utils force-load failed: {ex.Message}");
+            return false;
         }
     }
 
