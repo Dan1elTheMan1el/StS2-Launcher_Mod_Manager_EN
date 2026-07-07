@@ -251,6 +251,12 @@ public static class InitSetterEmitPatches
     private static bool _initCompleted;
     private static bool _earlyAccessLogged;
 
+    // Empty EncounterModel[] handed back by the AllEncounters guard when it fires
+    // before ModelDb.Init has run. Resolved once at wiring time (EncounterModel lives
+    // in sts2). Null only if the type can't be found, in which case the guard is
+    // disabled and the original getter runs (logged at wiring time).
+    private static System.Array _emptyEncounters;
+
     public static void ApplyInitTrace(Harmony harmony)
     {
         try
@@ -261,6 +267,14 @@ public static class InitSetterEmitPatches
                 PatchHelper.Log("InitSetterEmit: ModelDb not found — #3 trace inactive");
                 return;
             }
+
+            var encounterModel = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.EncounterModel");
+            if (encounterModel != null)
+                _emptyEncounters = System.Array.CreateInstance(encounterModel, 0);
+            else
+                PatchHelper.Log(
+                    "InitSetterEmit: EncounterModel not found — pre-Init AllEncounters guard disabled"
+                );
 
             var init = AccessTools.Method(modelDb, "Init");
             if (init != null)
@@ -293,7 +307,7 @@ public static class InitSetterEmitPatches
                         )
                     )
                 );
-                PatchHelper.Log("Patched ModelDb.AllEncounters getter (#3 trace: early access)");
+                PatchHelper.Log("Patched ModelDb.AllEncounters getter (#3: pre-Init guard)");
             }
         }
         catch (Exception ex)
@@ -318,21 +332,47 @@ public static class InitSetterEmitPatches
         PatchHelper.Log("[Issue55-Trace] ModelDb.Init body completed");
     }
 
-    public static void AllEncountersPrefix()
+    // Guard + one-shot trace on ModelDb.AllEncounters. Before ModelDb.Init runs, the
+    // acts dictionary has no base acts (ACT.OVERGROWTH etc.), so the real getter's
+    // Get<Overgrowth>() throws KeyNotFoundException. A mod (e.g. HextechRunes) that
+    // reads UnlockState.Relics during its own init triggers UnlockState..cctor early,
+    // and that cctor's `all` field initializer reads AllEncounters here → throw → the
+    // static cctor is permanently poisoned (TypeInitializationException cached) → every
+    // later UnlockState access (ProgressSaveManager.GenerateUnlockState) re-throws it →
+    // the play / mode-select screen goes unresponsive (issue #55 softlock, reproduced
+    // on game v0.107.1). Returning an empty encounter set lets the cctor complete. The
+    // player's real unlock state is built from save data via UnlockState(ProgressState),
+    // not from the `all` sentinel, so progression is unaffected — only the in-memory
+    // all/none sentinels lose encounter data for the session, which no gameplay path
+    // depends on. Once Init has started the dictionary is populated, so we step aside
+    // and let the real getter run.
+    public static bool AllEncountersPrefix(ref object __result)
     {
-        try
+        bool preInit = !_initStarted;
+
+        if (preInit && !_earlyAccessLogged)
         {
-            if (_initCompleted || _earlyAccessLogged)
-                return;
-            _earlyAccessLogged = true;
-            PatchHelper.Log(
-                "[Issue55-Trace] ModelDb.AllEncounters read BEFORE Init completed "
-                    + $"(initStarted={_initStarted}). Stack:\n{Environment.StackTrace}"
-            );
+            try
+            {
+                _earlyAccessLogged = true;
+                PatchHelper.Log(
+                    "[Issue55-Guard] ModelDb.AllEncounters read BEFORE Init started — "
+                        + "returning empty to prevent UnlockState cctor poison. Stack:\n"
+                        + Environment.StackTrace
+                );
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[Issue55-Guard] AllEncounters trace failed: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+
+        if (preInit && _emptyEncounters != null)
         {
-            PatchHelper.Log($"[Issue55-Trace] AllEncounters trace failed: {ex.Message}");
+            __result = _emptyEncounters;
+            return false; // skip the real getter — its Get<Overgrowth>() would throw
         }
+
+        return true; // Init has started (dict populated) — run the real getter
     }
 }
