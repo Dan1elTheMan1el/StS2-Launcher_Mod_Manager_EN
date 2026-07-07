@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2;
@@ -34,6 +36,7 @@ public class SteamConnection : IDisposable
 {
     private const int MaxBackoffMs = 32_000;
     private const int ConnectTimeoutMs = 15_000;
+    private const uint WorkshopAppId = 2868840;
 
     private readonly string _accountName;
     private readonly string _refreshToken;
@@ -95,6 +98,7 @@ public class SteamConnection : IDisposable
         _steamContent = _client.GetHandler<SteamContent>();
         _unifiedMessages = _client.GetHandler<SteamUnifiedMessages>();
         _unifiedMessages.CreateService<Cloud>();
+        _unifiedMessages.CreateService<PublishedFile>();
 
         _callbackManager.Subscribe<SteamClient.ConnectedCallback>(_ =>
         {
@@ -129,9 +133,14 @@ public class SteamConnection : IDisposable
         });
     }
 
-    // Sends a CCloud RPC. Connects on demand, resets idle timer, retries on
-    // transient connection failure.
-    public async Task<TResult> SendCloud<TRequest, TResult>(string method, TRequest request)
+    // Sends a unified-service RPC (e.g. "Cloud.EnumerateUserFiles",
+    // "PublishedFile.GetDetails"). Connects on demand, resets the idle timer, and
+    // serializes sends through _sendLock. The "#1" service version is appended
+    // internally so callers pass just "Service.Method".
+    public async Task<TResult> SendService<TRequest, TResult>(
+        string serviceMethod,
+        TRequest request
+    )
         where TRequest : ProtoBuf.IExtensible, new()
         where TResult : ProtoBuf.IExtensible, new()
     {
@@ -141,16 +150,183 @@ public class SteamConnection : IDisposable
         await _sendLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            var job = _unifiedMessages.SendMessage<TRequest, TResult>($"Cloud.{method}#1", request);
+            var job = _unifiedMessages.SendMessage<TRequest, TResult>(
+                $"{serviceMethod}#1",
+                request
+            );
             var response = await job.ToTask().ConfigureAwait(false);
             if (response.Result != EResult.OK)
-                throw new InvalidOperationException($"Cloud.{method} failed: {response.Result}");
+                throw new InvalidOperationException($"{serviceMethod} failed: {response.Result}");
             return response.Body;
         }
         finally
         {
             _sendLock.Release();
         }
+    }
+
+    // Sends a CCloud RPC. Connects on demand, resets idle timer, retries on
+    // transient connection failure.
+    public Task<TResult> SendCloud<TRequest, TResult>(string method, TRequest request)
+        where TRequest : ProtoBuf.IExtensible, new()
+        where TResult : ProtoBuf.IExtensible, new() =>
+        SendService<TRequest, TResult>($"Cloud.{method}", request);
+
+    // --- Steam Workshop (PublishedFile service, issue #58) --------------------
+    // Read-only browse/query plus subscription toggles. Physically separate from
+    // the cloud-save funnel; these only touch the Mods/ tree, never user saves.
+
+    // Fetches full metadata for a set of published file ids and maps each into a
+    // thin WorkshopItemDetails. Returns an empty list for an empty input.
+    public async Task<List<WorkshopItemDetails>> GetPublishedFileDetailsAsync(
+        IEnumerable<ulong> publishedFileIds
+    )
+    {
+        var ids = publishedFileIds?.Distinct().ToList() ?? new List<ulong>();
+        if (ids.Count == 0)
+            return new List<WorkshopItemDetails>();
+
+        var req = new CPublishedFile_GetDetails_Request
+        {
+            appid = WorkshopAppId,
+            includetags = true,
+            includevotes = true,
+            includechildren = false,
+            short_description = false,
+        };
+        req.publishedfileids.AddRange(ids);
+
+        var resp = await SendService<
+            CPublishedFile_GetDetails_Request,
+            CPublishedFile_GetDetails_Response
+        >("PublishedFile.GetDetails", req)
+            .ConfigureAwait(false);
+
+        var result = new List<WorkshopItemDetails>();
+        if (resp.publishedfiledetails != null)
+        {
+            foreach (var d in resp.publishedfiledetails)
+                result.Add(MapDetails(d));
+        }
+        return result;
+    }
+
+    // Enumerates the current user's Workshop subscriptions for the game, paging
+    // through GetUserFiles (type "mysubscriptions") until the reported total is
+    // reached. Requires a logged-in session (subscriptions are per-account).
+    public async Task<List<WorkshopItemDetails>> GetSubscribedFilesAsync()
+    {
+        EnsureConnected();
+        ulong steamId = _client.SteamID?.ConvertToUInt64() ?? 0;
+
+        var result = new List<WorkshopItemDetails>();
+        uint page = 1;
+        const uint perPage = 100;
+
+        while (true)
+        {
+            var req = new CPublishedFile_GetUserFiles_Request
+            {
+                steamid = steamId,
+                appid = WorkshopAppId,
+                page = page,
+                numperpage = perPage,
+                type = "mysubscriptions",
+                return_vote_data = true,
+                return_tags = true,
+                return_previews = false,
+                return_children = false,
+                return_short_description = true,
+            };
+
+            var resp = await SendService<
+                CPublishedFile_GetUserFiles_Request,
+                CPublishedFile_GetUserFiles_Response
+            >("PublishedFile.GetUserFiles", req)
+                .ConfigureAwait(false);
+
+            var pageItems = resp.publishedfiledetails;
+            if (pageItems == null || pageItems.Count == 0)
+                break;
+
+            foreach (var d in pageItems)
+                result.Add(MapDetails(d));
+
+            // total is the full subscription count; stop once we've paged past it
+            // or received a short final page.
+            if (result.Count >= resp.total || (uint)pageItems.Count < perPage)
+                break;
+            page++;
+        }
+
+        PatchHelper.Log($"[Workshop] Enumerated {result.Count} subscribed items");
+        return result;
+    }
+
+    // Subscribes or unsubscribes the current user from a Workshop item. list_type
+    // 1 == the standard subscription list; notify_client mirrors the Steam client
+    // behaviour so other sessions see the change.
+    public async Task SetSubscriptionAsync(ulong publishedFileId, bool subscribe)
+    {
+        if (subscribe)
+        {
+            var req = new CPublishedFile_Subscribe_Request
+            {
+                publishedfileid = publishedFileId,
+                list_type = 1,
+                appid = (int)WorkshopAppId,
+                notify_client = true,
+            };
+            await SendService<
+                CPublishedFile_Subscribe_Request,
+                CPublishedFile_Subscribe_Response
+            >("PublishedFile.Subscribe", req)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var req = new CPublishedFile_Unsubscribe_Request
+            {
+                publishedfileid = publishedFileId,
+                list_type = 1,
+                appid = (int)WorkshopAppId,
+                notify_client = true,
+            };
+            await SendService<
+                CPublishedFile_Unsubscribe_Request,
+                CPublishedFile_Unsubscribe_Response
+            >("PublishedFile.Unsubscribe", req)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static WorkshopItemDetails MapDetails(PublishedFileDetails d)
+    {
+        var item = new WorkshopItemDetails
+        {
+            PublishedFileId = d.publishedfileid,
+            Title = d.title,
+            Description = string.IsNullOrEmpty(d.short_description)
+                ? d.file_description
+                : d.short_description,
+            HContentFile = d.hcontent_file,
+            FileUrl = d.file_url,
+            FileName = d.filename,
+            FileSize = d.file_size,
+            TimeUpdated = d.time_updated,
+            PreviewUrl = d.preview_url,
+            VoteScore = d.vote_data?.score ?? 0f,
+            Subscriptions = d.subscriptions,
+            Banned = d.banned,
+            BanReason = d.ban_reason,
+            Visibility = d.visibility,
+        };
+        if (d.tags != null)
+        {
+            foreach (var t in d.tags)
+                item.Tags.Add(t.tag);
+        }
+        return item;
     }
 
     public void SuspendIdleTimeout()
