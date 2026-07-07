@@ -87,35 +87,23 @@ public static class WorkshopInstaller
     {
         try
         {
-            var modRoot = FindModRoot(downloadedDir);
-            if (modRoot == null)
+            // Find the mod's manifest by the game's convention (any "*.json" with an
+            // id — real Workshop items ship e.g. BaseLib.json, not mod_manifest.json).
+            if (!ModManifest.TryFindManifest(downloadedDir, out var manifest, out var manifestPath))
             {
                 PatchHelper.Log(
-                    $"[Workshop] Item {item.PublishedFileId}: no mod_manifest.json in payload "
-                        + $"(root={downloadedDir}). StS2 Workshop item layout unverified — leaving "
-                        + "nothing installed."
+                    $"[Workshop] Item {item.PublishedFileId}: no manifest .json with an 'id' in "
+                        + $"payload (root={downloadedDir}) — leaving nothing installed."
                 );
                 return new WorkshopInstallResult
                 {
                     Success = false,
                     NoManifest = true,
-                    Error = "Downloaded Workshop item has no mod_manifest.json.",
+                    Error = "Downloaded Workshop item has no manifest .json with an 'id'.",
                 };
             }
 
-            var manifest = ModManifest.TryParse(Path.Combine(modRoot, "mod_manifest.json"));
-            if (manifest == null || !manifest.IsValid())
-            {
-                PatchHelper.Log(
-                    $"[Workshop] Item {item.PublishedFileId}: mod_manifest.json missing 'id'."
-                );
-                return new WorkshopInstallResult
-                {
-                    Success = false,
-                    NoManifest = true,
-                    Error = "mod_manifest.json is missing or has no 'id' field.",
-                };
-            }
+            var modRoot = Path.GetDirectoryName(manifestPath);
 
             if (!IsValidId(manifest.Id))
                 return new WorkshopInstallResult
@@ -178,29 +166,6 @@ public static class WorkshopInstaller
             PatchHelper.Log($"[Workshop] Install failed for {item.PublishedFileId}: {ex}");
             return new WorkshopInstallResult { Success = false, Error = ex.Message };
         }
-    }
-
-    // Locates the folder containing mod_manifest.json: at the payload root, one
-    // level deep (single wrapping folder), or anywhere below (first match).
-    private static string FindModRoot(string root)
-    {
-        if (File.Exists(Path.Combine(root, "mod_manifest.json")))
-            return root;
-
-        var subdirs = Directory.GetDirectories(root);
-        if (subdirs.Length == 1 && File.Exists(Path.Combine(subdirs[0], "mod_manifest.json")))
-            return subdirs[0];
-
-        foreach (
-            var path in Directory.EnumerateFiles(
-                root,
-                "mod_manifest.json",
-                SearchOption.AllDirectories
-            )
-        )
-            return Path.GetDirectoryName(path);
-
-        return null;
     }
 
     private static void CopyDirectory(string src, string dest)

@@ -24,6 +24,11 @@ public class ModManifest
     [JsonPropertyName("version")]
     public string Version { get; set; }
 
+    // Minimum game version the mod declares support for. Display-only; absent in
+    // older mods, which is harmless.
+    [JsonPropertyName("min_game_version")]
+    public string MinGameVersion { get; set; }
+
     [JsonPropertyName("has_pck")]
     public bool HasPck { get; set; }
 
@@ -59,4 +64,68 @@ public class ModManifest
     public bool IsValid() => !string.IsNullOrWhiteSpace(Id);
 
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
+
+    // Locates a mod's manifest by the game's actual convention (verified against
+    // real Workshop items + a decompile of MegaCrit.Sts2.Core.Modding.ModManager):
+    // the game recurses a mod directory reading EVERY "*.json" and treats any file
+    // that parses with a non-empty id as a manifest, then loads "<id>.dll"/"<id>.pck"
+    // from that manifest's folder. There is no fixed "mod_manifest.json" name — that
+    // was a launcher WIP-era assumption real mods never satisfied.
+    //
+    // Returns the first valid manifest found, searched breadth-first so a top-level
+    // manifest wins over any nested one. Files without an id (e.g. mod_config.json)
+    // naturally fail IsValid() and are skipped, matching the game.
+    public static bool TryFindManifest(string dir, out ModManifest manifest, out string manifestPath)
+    {
+        manifest = null;
+        manifestPath = null;
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            return false;
+
+        foreach (var path in EnumerateJsonBreadthFirst(dir))
+        {
+            var m = TryParse(path);
+            if (m != null && m.IsValid())
+            {
+                manifest = m;
+                manifestPath = path;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static IEnumerable<string> EnumerateJsonBreadthFirst(string root)
+    {
+        var queue = new Queue<string>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var dir = queue.Dequeue();
+
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(dir, "*.json");
+            }
+            catch
+            {
+                files = System.Array.Empty<string>();
+            }
+            foreach (var f in files)
+                yield return f;
+
+            string[] subs;
+            try
+            {
+                subs = Directory.GetDirectories(dir);
+            }
+            catch
+            {
+                subs = System.Array.Empty<string>();
+            }
+            foreach (var s in subs)
+                queue.Enqueue(s);
+        }
+    }
 }

@@ -34,13 +34,10 @@ public static class ModImporter
             Directory.CreateDirectory(tempRoot);
             SafeExtract(zipPath, tempRoot);
 
-            var modRoot = FindModRoot(tempRoot);
-            if (modRoot == null)
-                return Fail("Selected zip is not a StS2 mod (mod_manifest.json not found).");
+            if (!ModManifest.TryFindManifest(tempRoot, out var manifest, out var manifestPath))
+                return Fail("Selected zip is not a StS2 mod (no manifest .json with an 'id').");
 
-            var manifest = ModManifest.TryParse(Path.Combine(modRoot, "mod_manifest.json"));
-            if (manifest == null || !manifest.IsValid())
-                return Fail("mod_manifest.json is missing or has no 'id' field.");
+            var modRoot = Path.GetDirectoryName(manifestPath);
 
             if (!IsValidId(manifest.Id))
                 return Fail($"Invalid mod id: '{manifest.Id}'");
@@ -84,27 +81,6 @@ public static class ModImporter
     }
 
     public static void CleanupImportZip(string zipPath) => TryDeleteFile(zipPath);
-
-    private static string FindModRoot(string tempRoot)
-    {
-        if (File.Exists(Path.Combine(tempRoot, "mod_manifest.json")))
-            return tempRoot;
-
-        var subdirs = Directory.GetDirectories(tempRoot);
-        if (subdirs.Length == 1 && File.Exists(Path.Combine(subdirs[0], "mod_manifest.json")))
-            return subdirs[0];
-
-        foreach (
-            var path in Directory.EnumerateFiles(
-                tempRoot,
-                "mod_manifest.json",
-                SearchOption.AllDirectories
-            )
-        )
-            return Path.GetDirectoryName(path);
-
-        return null;
-    }
 
     // Extracts with Zip Slip protection — any entry whose resolved path escapes
     // the destination root is rejected.

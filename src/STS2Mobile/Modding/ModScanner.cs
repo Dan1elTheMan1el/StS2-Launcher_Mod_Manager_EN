@@ -4,7 +4,10 @@ using System.IO;
 namespace STS2Mobile.Modding;
 
 // Walks AppPaths.ExternalModsDir and returns one ModEntryInfo per subfolder that
-// contains a parseable mod_manifest.json with a non-empty id.
+// contains a valid manifest by the game's convention (any "*.json" with a non-empty
+// id, searched recursively — see ModManifest.TryFindManifest). The launcher's older
+// "mod_manifest.json" rule matched no real mod, so the Installed tab showed an empty
+// list on device (issue #58).
 public static class ModScanner
 {
     public static List<ModEntryInfo> Scan()
@@ -15,12 +18,12 @@ public static class ModScanner
 
         foreach (var dir in Directory.EnumerateDirectories(AppPaths.ExternalModsDir))
         {
-            var manifestPath = Path.Combine(dir, "mod_manifest.json");
-            if (!File.Exists(manifestPath))
+            // Skip the Workshop download staging area — it holds partial payloads,
+            // not an installed mod.
+            if (Path.GetFileName(dir) == ".downloading")
                 continue;
 
-            var manifest = ModManifest.TryParse(manifestPath);
-            if (manifest == null || !manifest.IsValid())
+            if (!ModManifest.TryFindManifest(dir, out var manifest, out _))
                 continue;
 
             results.Add(
