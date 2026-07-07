@@ -27,7 +27,7 @@ public static class WorkshopInstaller
         // A manually installed mod already occupies this id — not overwritten.
         public bool Conflict;
 
-        // The downloaded payload had no mod_manifest.json (unexpected layout).
+        // The downloaded payload had no manifest .json with an 'id' (unexpected layout).
         public bool NoManifest;
     }
 
@@ -180,6 +180,10 @@ public static class WorkshopInstaller
     private static bool IsValidId(string id)
     {
         if (string.IsNullOrWhiteSpace(id))
+            return false;
+        // "." and ".." are path segments, not mod ids — reject them so Mods/<id>
+        // can never resolve to the Mods dir itself or its parent.
+        if (id == "." || id == "..")
             return false;
         foreach (var c in id)
         {

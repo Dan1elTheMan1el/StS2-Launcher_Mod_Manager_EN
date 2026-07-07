@@ -47,6 +47,28 @@ public static class AppPaths
         return combined;
     }
 
+    // True only if `dir` resolves to a direct child of ExternalModsDir. Guards mod
+    // deletion against a folder name / id that escapes the Mods tree (e.g. an id of
+    // ".." would make Path.Combine(ExternalModsDir, id) resolve to the parent — a
+    // catastrophic recursive delete). Callers must gate every mod-folder delete on
+    // this (issue #58: folder name may differ from id, so deletes are path-based).
+    public static bool IsDirectChildOfModsDir(string dir)
+    {
+        if (string.IsNullOrEmpty(dir))
+            return false;
+        try
+        {
+            var full = Path.GetFullPath(dir).TrimEnd('/', '\\');
+            var modsFull = Path.GetFullPath(ExternalModsDir).TrimEnd('/', '\\');
+            var parent = Path.GetDirectoryName(full);
+            return parent != null && string.Equals(parent, modsFull, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     // Returns true if the app has permission to write to shared external storage.
     public static bool HasStoragePermission()
     {

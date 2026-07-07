@@ -273,11 +273,12 @@ public class ModManagerSection : VBoxContainer
     private void OnRowRemovePressed(ModEntryInfo info)
     {
         var id = info.Id;
+        var topLevelDir = info.TopLevelDir;
         ConfirmationRequested?.Invoke(
             $"Remove '{info.Manifest.DisplayName}'?\nThis deletes the mod folder from storage.",
             () =>
             {
-                if (ModImporter.DeleteMod(id))
+                if (ModImporter.DeleteMod(topLevelDir, id))
                     SetStatus($"Removed {id}.", new Color(0.8f, 0.8f, 0.85f));
                 else
                     SetStatus($"Failed to remove {id}.", new Color(0.95f, 0.4f, 0.4f));

@@ -77,22 +77,31 @@ public class ModManifest
     // naturally fail IsValid() and are skipped, matching the game.
     public static bool TryFindManifest(string dir, out ModManifest manifest, out string manifestPath)
     {
+        foreach (var (m, path) in EnumerateManifests(dir))
+        {
+            manifest = m;
+            manifestPath = path;
+            return true;
+        }
         manifest = null;
         manifestPath = null;
+        return false;
+    }
+
+    // Yields every valid manifest in a directory, breadth-first (shallower first).
+    // The game loads all of them; the launcher's scanner surfaces each as its own
+    // entry. Files without an id (mod_config.json, data files) are skipped.
+    public static IEnumerable<(ModManifest Manifest, string Path)> EnumerateManifests(string dir)
+    {
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
-            return false;
+            yield break;
 
         foreach (var path in EnumerateJsonBreadthFirst(dir))
         {
             var m = TryParse(path);
             if (m != null && m.IsValid())
-            {
-                manifest = m;
-                manifestPath = path;
-                return true;
-            }
+                yield return (m, path);
         }
-        return false;
     }
 
     private static IEnumerable<string> EnumerateJsonBreadthFirst(string root)

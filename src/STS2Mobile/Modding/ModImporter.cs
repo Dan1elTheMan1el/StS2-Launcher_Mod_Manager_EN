@@ -128,6 +128,10 @@ public static class ModImporter
     {
         if (string.IsNullOrWhiteSpace(id))
             return false;
+        // "." and ".." are path segments, not mod ids — reject them so Mods/<id>
+        // can never resolve to the Mods dir itself or its parent.
+        if (id == "." || id == "..")
+            return false;
         foreach (var c in id)
         {
             if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
@@ -136,19 +140,32 @@ public static class ModImporter
         return true;
     }
 
-    public static bool DeleteMod(string modId)
+    // Deletes a mod by its top-level folder (folder name is no longer assumed to
+    // equal the id — issue #58) and drops its config entry. The folder must resolve
+    // to a direct child of ExternalModsDir, guarding against a traversal escape.
+    public static bool DeleteMod(string topLevelDir, string modId)
     {
-        if (!IsValidId(modId))
-            return false;
         try
         {
-            var dir = Path.Combine(AppPaths.ExternalModsDir, modId);
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
+            if (!string.IsNullOrEmpty(topLevelDir))
+            {
+                if (!AppPaths.IsDirectChildOfModsDir(topLevelDir))
+                {
+                    PatchHelper.Log(
+                        $"[Mods] Refusing to delete '{topLevelDir}': not a direct child of Mods."
+                    );
+                    return false;
+                }
+                if (Directory.Exists(topLevelDir))
+                    Directory.Delete(topLevelDir, recursive: true);
+            }
 
-            var cfg = ModConfig.Load();
-            cfg.Remove(modId);
-            cfg.Save();
+            if (!string.IsNullOrEmpty(modId))
+            {
+                var cfg = ModConfig.Load();
+                cfg.Remove(modId);
+                cfg.Save();
+            }
             return true;
         }
         catch (Exception ex)

@@ -419,7 +419,17 @@ public static class WorkshopSyncService
         {
             try
             {
+                // Workshop mods are always installed as Mods/<id>, so the folder is
+                // the id — but re-verify it resolves to a direct child of Mods before
+                // deleting, guarding against a hostile id escaping the tree.
                 var dir = Path.Combine(AppPaths.ExternalModsDir, mod.Id);
+                if (!AppPaths.IsDirectChildOfModsDir(dir))
+                {
+                    PatchHelper.Log(
+                        $"[Workshop] Refusing to delete '{dir}': not a direct child of Mods."
+                    );
+                    return false;
+                }
                 if (Directory.Exists(dir))
                     Directory.Delete(dir, recursive: true);
             }
@@ -460,6 +470,10 @@ public static class WorkshopSyncService
     private static bool IsValidId(string id)
     {
         if (string.IsNullOrWhiteSpace(id))
+            return false;
+        // "." and ".." are path segments, not mod ids — reject them so an id can
+        // never resolve to the Mods dir itself or its parent.
+        if (id == "." || id == "..")
             return false;
         foreach (var c in id)
         {
