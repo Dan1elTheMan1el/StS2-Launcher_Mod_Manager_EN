@@ -26,7 +26,8 @@ public class ModListRow : PanelContainer
         bool enabled,
         bool canMoveUp,
         bool canMoveDown,
-        float scale
+        float scale,
+        bool workshopManaged = false
     )
     {
         ModId = info.Id;
@@ -107,15 +108,30 @@ public class ModListRow : PanelContainer
         pathLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
         _detail.AddChild(pathLabel);
 
-        var removeButton = new StyledButton("Remove Mod", scale, fontSize: 12, height: 36);
-        var r = (int)(4 * scale);
-        var bw = Math.Max(1, (int)(2 * scale));
-        var dangerStyle = StyledButton.MakeOutline(new Color(0.85f, 0.3f, 0.3f), r, bw);
-        removeButton.AddThemeStyleboxOverride("normal", dangerStyle);
-        removeButton.AddThemeStyleboxOverride("hover", dangerStyle);
-        removeButton.AddThemeStyleboxOverride("pressed", dangerStyle);
-        removeButton.Pressed += () => RemovePressed?.Invoke();
-        _detail.AddChild(removeButton);
+        // Workshop-managed mods are removed by unsubscribing (issue #58 phase 3),
+        // not by a local delete that the next subscription sync would undo.
+        if (workshopManaged)
+        {
+            var managedLabel = new StyledLabel(
+                "Managed via Steam Workshop subscription.",
+                scale,
+                fontSize: 11
+            );
+            managedLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.65f, 0.85f));
+            _detail.AddChild(managedLabel);
+        }
+        else
+        {
+            var removeButton = new StyledButton("Remove Mod", scale, fontSize: 12, height: 36);
+            var r = (int)(4 * scale);
+            var bw = Math.Max(1, (int)(2 * scale));
+            var dangerStyle = StyledButton.MakeOutline(new Color(0.85f, 0.3f, 0.3f), r, bw);
+            removeButton.AddThemeStyleboxOverride("normal", dangerStyle);
+            removeButton.AddThemeStyleboxOverride("hover", dangerStyle);
+            removeButton.AddThemeStyleboxOverride("pressed", dangerStyle);
+            removeButton.Pressed += () => RemovePressed?.Invoke();
+            _detail.AddChild(removeButton);
+        }
     }
 
     private static string BuildTitle(ModEntryInfo info)

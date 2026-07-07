@@ -9,10 +9,13 @@ namespace STS2Mobile.Modding;
 // User-editable enable/order state for installed mods. Persisted alongside the
 // mods themselves at AppPaths.ExternalModConfigFile so it survives app reinstalls
 // (same storage as the Mods/ folder).
+// v2 (issue #58): entries carry workshop provenance (source/publishedFileId/
+// timeUpdated) so Steam Workshop subscriptions can be distinguished from
+// manually installed mods. v1 files load as-is — missing fields mean "local".
 public class ModConfig
 {
     [JsonPropertyName("version")]
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     [JsonPropertyName("mods")]
     public List<ModConfigEntry> Mods { get; set; } = new();
@@ -34,6 +37,9 @@ public class ModConfig
                 if (cfg != null)
                 {
                     cfg.Mods ??= new List<ModConfigEntry>();
+                    // v1 -> v2 migration is purely additive; stamp the current
+                    // version so the next Save writes the v2 shape.
+                    cfg.Version = 2;
                     return cfg;
                 }
             }
@@ -127,6 +133,8 @@ public class ModConfig
 
 public class ModConfigEntry
 {
+    public const string SourceWorkshop = "workshop";
+
     [JsonPropertyName("id")]
     public string Id { get; set; }
 
@@ -135,4 +143,25 @@ public class ModConfigEntry
 
     [JsonPropertyName("order")]
     public int Order { get; set; }
+
+    // v2 (issue #58): null/absent means a manually installed ("local") mod, so
+    // local entries keep the compact v1 shape on disk.
+    [JsonPropertyName("source")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string Source { get; set; }
+
+    // Steam Workshop published file id; join key against the user's
+    // subscription list (GetUserFiles) during sync.
+    [JsonPropertyName("publishedFileId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public ulong PublishedFileId { get; set; }
+
+    // Workshop item's time_updated (unix seconds) at download time; a newer
+    // value on Steam means the item needs a re-download.
+    [JsonPropertyName("timeUpdated")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long TimeUpdated { get; set; }
+
+    [JsonIgnore]
+    public bool IsWorkshop => Source == SourceWorkshop;
 }

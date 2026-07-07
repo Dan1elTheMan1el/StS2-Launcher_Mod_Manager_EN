@@ -158,6 +158,7 @@ public class LauncherController
         _view.Actions.CheckGameUpdatePressed += OnCheckGameUpdatePressed;
         _view.Actions.CheckLauncherUpdatePressed += OnCheckLauncherUpdatePressed;
         _view.ModManagerButton.Pressed += OnModManagerPressed;
+        _view.ModsButton.Pressed += OnModsPressed;
         _view.ModManager.BackPressed += OnModManagerBackPressed;
         _view.DebugButton.Pressed += OnDebugTogglePressed;
         UpdateDebugButtonLabel();
@@ -237,6 +238,7 @@ public class LauncherController
         _lastShowUpdate = showUpdate;
         _view.Actions.ShowLaunch(text, showCloudSync, showUpdate);
         _view.ModManagerButton.Visible = true;
+        _view.ModsButton.Visible = true;
 
         // Kick off the launcher self-update check the first time we land on the
         // launch stage. Only once per session, silent if already on latest.
@@ -286,8 +288,8 @@ public class LauncherController
     private bool _autoUpdateChecked;
 
     // Repurposed in 0.3.0 to open the Save Sync dialog instead of the WIP mod
-    // manager screen. The original mod-manager navigation is preserved (commented
-    // below) for when that flow is finished.
+    // manager screen. That screen is now the Mod Hub, reachable via its own
+    // button (OnModsPressed, issue #58).
     private async void OnModManagerPressed()
     {
         PatchHelper.Log("[Mods] Save Manager button tapped");
@@ -305,8 +307,15 @@ public class LauncherController
         {
             _view.Actions.SetSyncBusy(false);
         }
-        // Original navigation:
-        // _view.ShowModManager();
+    }
+
+    // Issue #58: the original mod-manager navigation, revived as the Mod Hub
+    // entry point (its own button — SAVE MANAGER above keeps its 0.3.0 role).
+    private void OnModsPressed()
+    {
+        PatchHelper.Log("[Mods] Mod Manager button tapped");
+        _view.SetStatus("Mod Manager");
+        _view.ShowModManager();
     }
 
     public void OnModManagerBackPressed()
@@ -316,8 +325,9 @@ public class LauncherController
         );
         // Must hide mod manager first, otherwise UpdateUI's ModManager.Visible guard
         // refuses to redraw — that was making BACK a no-op.
-        _view.ModManager.Visible = false;
+        _view.HideModManager();
         _view.ModManagerButton.Visible = false;
+        _view.ModsButton.Visible = false;
 
         // Fast path (ReadyToLaunch) shows the launch UI without changing SessionState,
         // so we can't rely on SessionState==LoggedIn to know if we were on the launch screen.

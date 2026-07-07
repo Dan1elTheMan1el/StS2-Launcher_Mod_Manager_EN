@@ -9,10 +9,13 @@ using STS2Mobile.Modding;
 
 namespace STS2Mobile.Launcher.Sections;
 
-// Full-width mod manager screen shown when the user taps "MOD MANAGER" on the
-// login screen. Scans AppPaths.ExternalModsDir, renders one ModListRow per mod,
-// and provides import/reorder/toggle/remove actions wired directly to ModConfig
-// and ModImporter.
+// Full-screen Mod Hub shown when the user taps "MOD MANAGER" on the launch
+// screen (issue #58: revived from the pre-0.3.0 WIP flow and promoted from the
+// left column to the whole panel). Two tabs: WORKSHOP (placeholder until the
+// in-app browser lands in later phases) and INSTALLED, which scans
+// AppPaths.ExternalModsDir, renders one ModListRow per mod grouped by source
+// (Workshop subscription vs local install), and provides import/reorder/
+// toggle/remove actions wired directly to ModConfig and ModImporter.
 public class ModManagerSection : VBoxContainer
 {
     public event Action BackPressed;
@@ -25,6 +28,10 @@ public class ModManagerSection : VBoxContainer
     private readonly StyledButton _refreshButton;
     private readonly StyledButton _backButton;
     private readonly StyledButton _permissionButton;
+    private readonly StyledButton _workshopTabButton;
+    private readonly StyledButton _installedTabButton;
+    private readonly VBoxContainer _workshopPane;
+    private readonly VBoxContainer _installedPane;
 
     private bool _importInFlight;
 
@@ -32,23 +39,70 @@ public class ModManagerSection : VBoxContainer
     {
         _scale = scale;
         Visible = false;
+        SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        SizeFlagsVertical = SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", (int)(8 * scale));
 
+        var header = new HBoxContainer();
+        header.AddThemeConstantOverride("separation", (int)(8 * scale));
+        AddChild(header);
+
         var title = new StyledLabel("Mod Manager", scale, fontSize: 20);
-        AddChild(title);
+        title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        header.AddChild(title);
+
+        _workshopTabButton = new StyledButton("WORKSHOP", scale, fontSize: 14, height: 40);
+        _workshopTabButton.ToggleMode = true;
+        _workshopTabButton.CustomMinimumSize = new Vector2((int)(140 * scale), 0);
+        _workshopTabButton.Pressed += () => SelectTab(workshop: true);
+        header.AddChild(_workshopTabButton);
+
+        _installedTabButton = new StyledButton("INSTALLED", scale, fontSize: 14, height: 40);
+        _installedTabButton.ToggleMode = true;
+        _installedTabButton.CustomMinimumSize = new Vector2((int)(140 * scale), 0);
+        _installedTabButton.Pressed += () => SelectTab(workshop: false);
+        header.AddChild(_installedTabButton);
+
+        // Placeholder pane until the in-app browser ships (issue #58 phase 4).
+        _workshopPane = new VBoxContainer();
+        _workshopPane.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _workshopPane.AddThemeConstantOverride("separation", (int)(8 * scale));
+        AddChild(_workshopPane);
+
+        var workshopTitle = new StyledLabel(
+            "Steam Workshop integration is under construction.",
+            scale,
+            fontSize: 14
+        );
+        workshopTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _workshopPane.AddChild(workshopTitle);
+
+        var workshopHint = new StyledLabel(
+            "Browsing, subscribing and auto-downloading Workshop mods will arrive in a future launcher update.",
+            scale,
+            fontSize: 12
+        );
+        workshopHint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        workshopHint.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.7f));
+        _workshopPane.AddChild(workshopHint);
+
+        _installedPane = new VBoxContainer();
+        _installedPane.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _installedPane.AddThemeConstantOverride("separation", (int)(8 * scale));
+        AddChild(_installedPane);
 
         _statusLabel = new StyledLabel("", scale, fontSize: 12);
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        AddChild(_statusLabel);
+        _installedPane.AddChild(_statusLabel);
 
         _permissionButton = new StyledButton("Grant Storage Permission", scale, fontSize: 14);
         _permissionButton.Visible = false;
         _permissionButton.Pressed += OnGrantPermissionPressed;
-        AddChild(_permissionButton);
+        _installedPane.AddChild(_permissionButton);
 
         var actionRow = new HBoxContainer();
         actionRow.AddThemeConstantOverride("separation", (int)(6 * scale));
-        AddChild(actionRow);
+        _installedPane.AddChild(actionRow);
 
         _importButton = new StyledButton("Import Mod (.zip)...", scale, fontSize: 14);
         _importButton.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -63,7 +117,7 @@ public class ModManagerSection : VBoxContainer
         var scroll = new ScrollContainer();
         scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
         scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
-        AddChild(scroll);
+        _installedPane.AddChild(scroll);
 
         _listContainer = new VBoxContainer();
         _listContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -73,6 +127,30 @@ public class ModManagerSection : VBoxContainer
         _backButton = new StyledButton("BACK", scale, fontSize: 14);
         _backButton.Pressed += () => BackPressed?.Invoke();
         AddChild(_backButton);
+
+        SelectTab(workshop: false);
+    }
+
+    private void SelectTab(bool workshop)
+    {
+        _workshopTabButton.SetPressedNoSignal(workshop);
+        _installedTabButton.SetPressedNoSignal(!workshop);
+        ApplyTabStyle(_workshopTabButton, workshop);
+        ApplyTabStyle(_installedTabButton, !workshop);
+        _workshopPane.Visible = workshop;
+        _installedPane.Visible = !workshop;
+    }
+
+    private void ApplyTabStyle(Button button, bool active)
+    {
+        var r = (int)(4 * _scale);
+        var bw = Math.Max(1, (int)(2 * _scale));
+        var style = active
+            ? StyledButton.MakeOutline(new Color(0.35f, 0.55f, 0.85f), r, bw)
+            : StyledButton.MakeOutline(new Color(0.3f, 0.3f, 0.35f), r, bw);
+        button.AddThemeStyleboxOverride("normal", style);
+        button.AddThemeStyleboxOverride("hover", style);
+        button.AddThemeStyleboxOverride("pressed", style);
     }
 
     public void Refresh()
@@ -117,20 +195,54 @@ public class ModManagerSection : VBoxContainer
 
         SetStatus($"{orderedInfos.Count} mod(s) installed.", new Color(0.75f, 0.75f, 0.8f));
 
+        // Rows are grouped by source (Workshop subscription vs local install)
+        // for display, but Order — and therefore ▲/▼ — stays global because it
+        // is the game's load order across both groups. Reordering near a group
+        // boundary can swap with a row rendered in the other group.
+        var workshopIndices = new List<int>();
+        var localIndices = new List<int>();
         for (int i = 0; i < orderedInfos.Count; i++)
         {
-            var info = orderedInfos[i];
-            var entry = cfg.Get(info.Id);
-            var canUp = i > 0;
-            var canDown = i < orderedInfos.Count - 1;
-            var row = new ModListRow(info, entry.Enabled, canUp, canDown, _scale);
-            var capturedId = info.Id;
-            row.Toggled += on => OnRowToggled(capturedId, on);
-            row.MoveUpPressed += () => OnRowMoved(capturedId, -1);
-            row.MoveDownPressed += () => OnRowMoved(capturedId, +1);
-            row.RemovePressed += () => OnRowRemovePressed(info);
-            _listContainer.AddChild(row);
+            var entry = cfg.Get(orderedInfos[i].Id);
+            (entry?.IsWorkshop == true ? workshopIndices : localIndices).Add(i);
         }
+
+        if (workshopIndices.Count > 0)
+        {
+            AddGroupHeader("WORKSHOP SUBSCRIPTIONS");
+            foreach (var i in workshopIndices)
+                AddModRow(orderedInfos, cfg, i, workshopManaged: true);
+            AddGroupHeader("LOCAL MODS");
+        }
+        foreach (var i in localIndices)
+            AddModRow(orderedInfos, cfg, i, workshopManaged: false);
+    }
+
+    private void AddModRow(
+        List<ModEntryInfo> orderedInfos,
+        ModConfig cfg,
+        int index,
+        bool workshopManaged
+    )
+    {
+        var info = orderedInfos[index];
+        var entry = cfg.Get(info.Id);
+        var canUp = index > 0;
+        var canDown = index < orderedInfos.Count - 1;
+        var row = new ModListRow(info, entry.Enabled, canUp, canDown, _scale, workshopManaged);
+        var capturedId = info.Id;
+        row.Toggled += on => OnRowToggled(capturedId, on);
+        row.MoveUpPressed += () => OnRowMoved(capturedId, -1);
+        row.MoveDownPressed += () => OnRowMoved(capturedId, +1);
+        row.RemovePressed += () => OnRowRemovePressed(info);
+        _listContainer.AddChild(row);
+    }
+
+    private void AddGroupHeader(string text)
+    {
+        var label = new StyledLabel(text, _scale, fontSize: 12);
+        label.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
+        _listContainer.AddChild(label);
     }
 
     private void ClearList()

@@ -17,6 +17,7 @@ public class LauncherView
     public ActionSection Actions { get; }
     public ModManagerSection ModManager { get; }
     public StyledButton ModManagerButton { get; }
+    public StyledButton ModsButton { get; }
     public LogView Log { get; }
     public StyledButton DebugButton { get; }
 
@@ -114,14 +115,14 @@ public class LauncherView
         Actions = new ActionSection(scale);
         left.AddChild(Actions);
 
-        ModManager = new ModManagerSection(scale);
-        ModManager.ConfirmationRequested += (message, onOk, onCancel) =>
-            ShowConfirmation(message, onOk, onCancel);
-        left.AddChild(ModManager);
+        // Issue #58: entry point to the full-screen Mod Hub (revived WIP flow).
+        ModsButton = new StyledButton("MOD MANAGER", scale, fontSize: 14, height: 40);
+        ModsButton.Visible = false;
+        left.AddChild(ModsButton);
 
         // Repurposed in 0.3.0: opens the Save Sync dialog instead of the WIP
-        // mod manager screen. The ModManagerSection above is still constructed
-        // for future use but no longer reachable from this button.
+        // mod manager screen (that flow is now the Mod Hub, reachable via
+        // ModsButton above since issue #58).
         ModManagerButton = new StyledButton("SAVE MANAGER", scale, fontSize: 14, height: 40);
         ModManagerButton.Visible = false;
         left.AddChild(ModManagerButton);
@@ -169,7 +170,19 @@ public class LauncherView
         Log.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         Log.GuiInput += DismissKeyboard;
         right.AddChild(Log);
+
+        // Issue #58: the Mod Hub covers the whole panel (both columns) instead
+        // of living inside the left column — the Workshop browser and mod list
+        // need the full width on phones. ShowModManager() swaps it in for the
+        // main two-column layout.
+        _mainHbox = hbox;
+        ModManager = new ModManagerSection(scale);
+        ModManager.ConfirmationRequested += (message, onOk, onCancel) =>
+            ShowConfirmation(message, onOk, onCancel);
+        _panel.Content.AddChild(ModManager);
     }
+
+    private readonly HBoxContainer _mainHbox;
 
     private readonly float _scale;
 
@@ -185,15 +198,22 @@ public class LauncherView
         Code.Visible = false;
         Download.Visible = false;
         Actions.HideAll();
-        ModManager.Visible = false;
+        ModsButton.Visible = false;
         ModManagerButton.Visible = false;
     }
 
     public void ShowModManager()
     {
         HideAllSections();
+        _mainHbox.Visible = false;
         ModManager.Visible = true;
         ModManager.Refresh();
+    }
+
+    public void HideModManager()
+    {
+        ModManager.Visible = false;
+        _mainHbox.Visible = true;
     }
 
     public void UpdateKeyboardOffset()
