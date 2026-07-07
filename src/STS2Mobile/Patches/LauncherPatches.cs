@@ -5,7 +5,6 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Saves;
-using MegaCrit.Sts2.Core.Saves.Managers;
 using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
 using STS2Mobile.Steam;
@@ -448,10 +447,30 @@ public static class LauncherPatches
                 }
                 break;
             case CloudConflictChoice.Cancel:
-                // User aborted. Force local-only mode for this session — the game still
-                // boots, but no cloud writes happen. They can retry next launch.
-                _cloudCacheReady = false;
-                PatchHelper.Log("[Cloud] Conflict cancelled — falling back to local-only");
+                // Informational dialogs (Identical/NoData) only reach here via the
+                // Save Manager button — there's no conflict to resolve, so closing
+                // one must NOT flip the session to local-only (issue: verifying an
+                // already-synced state then closing was silently killing cloud
+                // writes for the session). The first-PLAY flow filters these out
+                // earlier, so this branch is exactly the button+informational case.
+                if (
+                    decision.Decision == SyncDecision.Identical
+                    || decision.Decision == SyncDecision.NoData
+                )
+                {
+                    PatchHelper.Log(
+                        "[Cloud] Sync dialog closed (sides already in sync — no action)"
+                    );
+                }
+                else
+                {
+                    // User aborted an actionable conflict (Conflict/MobileOnly/
+                    // CloudOnly). Force local-only mode for this session — the game
+                    // still boots, but no cloud writes happen. This is the deferred-
+                    // conflict safeguard; they can retry next launch.
+                    _cloudCacheReady = false;
+                    PatchHelper.Log("[Cloud] Conflict cancelled — falling back to local-only");
+                }
                 break;
         }
     }
