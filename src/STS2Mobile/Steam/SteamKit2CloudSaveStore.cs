@@ -36,10 +36,15 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         Instance = this;
     }
 
-    public void Flush(int timeoutMs = 5000)
+    // P0-1: propagates whether the write queue actually drained (true) or hit
+    // the timeout with work still pending/in-flight (false). _connection.Flush
+    // (the on-demand disconnect) always still runs regardless — that's just a
+    // courtesy teardown, orthogonal to whether the writes themselves finished.
+    public bool Flush(int timeoutMs = 5000)
     {
-        _writeQueue.Flush(timeoutMs);
+        bool drained = _writeQueue.Flush(timeoutMs);
         _connection.Flush();
+        return drained;
     }
 
     public void Dispose()
@@ -129,6 +134,16 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         if (CloudWriteGuard.ShouldBlockWrite(_cache, canonPath, bytes.Length, out var blockReason))
         {
             CloudWriteGuard.NotifyBlocked(canonPath, blockReason);
+            return;
+        }
+
+        // Issue #36 Part C — content-integrity guard, same funnel, same
+        // fail-safe shape as Part B above: a truncated/corrupt-but-non-empty
+        // save (Part B only catches empty) must never reach the cloud either.
+        // Also runs on the raw pre-compression bytes, before _cache.Set/enqueue.
+        if (CloudWriteGuard.ShouldBlockCorruptWrite(canonPath, bytes, out var corruptReason))
+        {
+            CloudWriteGuard.NotifyBlocked(canonPath, corruptReason);
             return;
         }
 
@@ -269,6 +284,24 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     public bool IsFilePersisted(string path) => _cache.IsFilePersisted(path);
 
+    // P1-1 (A1, device-verified) — re-enumerates cloud files, rolling back to
+    // the previous snapshot if the fresh enumerate fails (see CloudFileCache.
+    // SafeRefresh). Called at the start of CloudSyncDecisions.DetermineAsync/
+    // DeterminePerProfileAsync so a sync decision never compares against a
+    // stale boot-time snapshot when the cloud side changed mid-session (e.g.
+    // a KeepCloud pull earlier this session, or a PC-side upload since boot)
+    // — confirmed on device: a KeepCloud pull landed (raw=228298) but every
+    // later decision kept comparing against the 217901-byte boot snapshot,
+    // re-reporting the same false Conflict indefinitely.
+    public void RefreshCache() => _cache.SafeRefresh();
+
+    // Set once the previous batch's write-queue lambda has fully run (i.e. only
+    // meaningful to read AFTER Flush() has confirmed the queue drained — see
+    // CloudSyncCoordinator.ManualPushAllAsync). Reflects whether every file in
+    // the batch actually made it, independent of whether the CompleteAppUploadBatch
+    // RPC itself succeeded (that failure is handled separately via PendingUploadBatch).
+    public bool LastBatchHadFailures { get; private set; }
+
     public void BeginSaveBatch()
     {
         lock (_batchLock)
@@ -276,8 +309,17 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
             _collectingBatch = true;
             _batchPendingFiles.Clear();
         }
+        LastBatchHadFailures = false;
     }
 
+    // P0-1 (Valve-confirmed: see _workspace/05_steamkit2_research.md Q1) —
+    // failing to call CompleteAppUploadBatch blocks ALL new uploads for this
+    // user+app for several minutes ("too many pending requests"), which is the
+    // confirmed cause of repeated PC desync failures. Once BeginAppUploadBatch
+    // hands us a batch_id, EVERY exit from this point — normal completion, a
+    // per-file upload failure, or an unexpected exception in the loop itself —
+    // MUST still call CompleteAppUploadBatchBlocking. The try/finally below is
+    // what makes that unconditional.
     public void EndSaveBatch()
     {
         List<(string path, byte[] bytes)> files;
@@ -316,41 +358,95 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
             }
             catch (Exception ex)
             {
+                // Begin itself failed — no batch was ever opened server-side,
+                // so there's nothing for Complete to close. Fall back to
+                // individual (non-batched) uploads; each still goes through
+                // the same retry/commit path as a normal write.
                 PatchHelper.Log($"[Cloud] BeginSaveBatch failed: {ex.Message}");
+                bool allOk = true;
                 foreach (var (path, bytes) in files)
-                    UploadWithRetry(path, bytes);
+                    allOk &= UploadWithRetry(path, bytes);
+                LastBatchHadFailures = !allOk;
                 return;
             }
 
-            foreach (var (path, bytes) in files)
-                UploadWithRetry(path, bytes, batchId);
+            // Persist the batch_id the instant Begin succeeds, BEFORE any
+            // upload starts. If the process dies partway through the uploads
+            // below (kill, crash, ANR), Steam is left holding this batch open;
+            // the marker lets the NEXT session's first cloud connection find
+            // and close it (see CloudFileCache.LoadFileList).
+            PendingUploadBatch.Mark(batchId);
 
+            bool anyUploadFailed = false;
             try
             {
-                _connection
-                    .SendCloud<
-                        CCloud_CompleteAppUploadBatch_Request,
-                        CCloud_CompleteAppUploadBatch_Response
-                    >(
-                        "CompleteAppUploadBatchBlocking",
-                        new CCloud_CompleteAppUploadBatch_Request
-                        {
-                            appid = AppId,
-                            batch_id = batchId,
-                            batch_eresult = (uint)SteamKit2.EResult.OK,
-                        }
-                    )
-                    .GetAwaiter()
-                    .GetResult();
+                foreach (var (path, bytes) in files)
+                {
+                    if (!UploadWithRetry(path, bytes, batchId))
+                        anyUploadFailed = true;
+                }
             }
             catch (Exception ex)
             {
-                PatchHelper.Log($"[Cloud] EndSaveBatch failed: {ex.Message}");
+                // UploadWithRetry already swallows its own per-file exceptions
+                // — this only guards the loop/enumeration itself. Either way
+                // the batch below must still be closed, so this is deliberately
+                // just a flag flip, not an early return.
+                PatchHelper.Log($"[Cloud] EndSaveBatch upload loop threw: {ex.Message}");
+                anyUploadFailed = true;
+            }
+            finally
+            {
+                // Unconditional close. batch_eresult tells Steam whether this
+                // batch's uploads all succeeded (1/OK) or not (2/Fail) — per
+                // the research doc's protocol reading, Steam only needs "all
+                // operations attempted" to unblock new batches, so this fires
+                // regardless of anyUploadFailed.
+                try
+                {
+                    _connection
+                        .SendCloud<
+                            CCloud_CompleteAppUploadBatch_Request,
+                            CCloud_CompleteAppUploadBatch_Response
+                        >(
+                            "CompleteAppUploadBatchBlocking",
+                            new CCloud_CompleteAppUploadBatch_Request
+                            {
+                                appid = AppId,
+                                batch_id = batchId,
+                                batch_eresult = (uint)(
+                                    anyUploadFailed
+                                        ? SteamKit2.EResult.Fail
+                                        : SteamKit2.EResult.OK
+                                ),
+                            }
+                        )
+                        .GetAwaiter()
+                        .GetResult();
+                    PendingUploadBatch.Clear();
+                }
+                catch (Exception ex)
+                {
+                    // Complete itself never landed — leave the marker in place.
+                    // The batch may still be open server-side; next session's
+                    // stale-batch cleanup will best-effort retry (fail-open).
+                    PatchHelper.Log($"[Cloud] EndSaveBatch Complete failed: {ex.Message}");
+                }
+                LastBatchHadFailures = anyUploadFailed;
             }
         });
     }
 
-    private void UploadWithRetry(
+    // Returns true once the file has actually landed (commit confirmed by
+    // UploadFileAsync), false if every attempt failed — EndSaveBatch uses this
+    // to decide the batch's final batch_eresult (P0-1). P1-4 (F2): also
+    // retries transient cancellation (same idle-timeout/EnsureConnected race
+    // the read side already retries — see CloudSyncDecisions.
+    // ReadCloudFileWithRetryAsync) using the same attempt/backoff frame as
+    // the existing TooManyPending retry below. Writes had no equivalent
+    // retry before — a write that lost this race was silently dropped as a
+    // hard failure with no second attempt.
+    private bool UploadWithRetry(
         string path,
         byte[] bytes,
         ulong batchId = 0,
@@ -362,7 +458,7 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
             try
             {
                 UploadFileAsync(path, bytes, batchId, timestamp).GetAwaiter().GetResult();
-                return;
+                return true;
             }
             catch (InvalidOperationException ex)
                 when (ex.Message.Contains("TooManyPending") && attempt < 2)
@@ -373,15 +469,51 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                 );
                 Thread.Sleep((attempt + 1) * 2000);
             }
+            catch (Exception ex) when (attempt < 2 && IsTransientCancellation(ex))
+            {
+                PatchHelper.Log(
+                    $"[Cloud] Upload for {CloudFileCache.CanonicalizePath(path)} hit transient "
+                        + $"cancellation (attempt {attempt + 1}/3): {ex.Message} — retrying..."
+                );
+                Thread.Sleep((attempt + 1) * 500);
+            }
             catch (Exception ex)
             {
                 PatchHelper.Log(
                     $"[Cloud] Upload failed for {CloudFileCache.CanonicalizePath(path)}: {ex.Message}"
                 );
-                return;
+                // P1-4 (F3) — WriteFile already optimistically set this path's
+                // cache entry (size/mtime) BEFORE this upload ever ran. Since
+                // the upload never actually landed, that cached size is a
+                // guess, not a confirmed fact — mark it unpersisted so a
+                // future consumer of IsFilePersisted knows not to trust it.
+                _cache.ForgetFile(path);
+                return false;
             }
         }
+        // Unreachable in practice — every path above either returns or, on the
+        // final attempt, falls to a catch(Exception) block above (both
+        // guarded branches require attempt < 2, so attempt==2 always falls to
+        // the final unconditional catch). Kept for the compiler's
+        // definite-return rule.
+        _cache.ForgetFile(path);
+        return false;
     }
+
+    // The idle-timeout race manifests as an OperationCanceledException (or
+    // the TaskCanceledException subclass) bubbling out of SteamKit2's unified
+    // message job when the connection drops mid-request. Mirrors
+    // CloudSyncDecisions.IsTransientCancellation (read side) — duplicated
+    // rather than shared since it's a 3-line predicate and the two call sites
+    // are otherwise unrelated. Also checks InnerException: UploadFileAsync
+    // wraps a transient commit-RPC failure in a generic InvalidOperationException
+    // (see its own comment) so the outer "Cloud upload failed" message stays
+    // consistent for logging, but the original transient exception is kept as
+    // InnerException specifically so this check can still see it.
+    private static bool IsTransientCancellation(Exception ex) =>
+        ex is OperationCanceledException
+        || ex.Message.Contains("was canceled", StringComparison.OrdinalIgnoreCase)
+        || (ex.InnerException != null && IsTransientCancellation(ex.InnerException));
 
     private async Task UploadFileAsync(
         string path,
@@ -443,6 +575,11 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         }
 
         bool uploadSucceeded = false;
+        // P1-4 (F3) — set only when the commit RPC itself throws, so we can
+        // preserve it as the InnerException of the failure thrown below
+        // (UploadWithRetry's transient-cancellation check needs to see the
+        // real exception, not just the generic message it's wrapped in).
+        Exception commitFailure = null;
         try
         {
             foreach (var block in beginResult.block_requests)
@@ -498,16 +635,32 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                     .ConfigureAwait(false);
 
                 if (uploadSucceeded && !commitResult.file_committed)
+                {
+                    // P1-4 (F3) — this used to be logged and silently treated
+                    // as success: the HTTP blocks landed but Steam's own
+                    // commit step rejected the file, so nothing usable
+                    // actually exists at `path` server-side. Flip it so the
+                    // caller (UploadWithRetry → LastBatchHadFailures/
+                    // batch_eresult) sees a real failure instead of a lie.
                     PatchHelper.Log($"[Cloud] Commit returned file_committed=false for {path}");
+                    uploadSucceeded = false;
+                }
             }
             catch (Exception ex)
             {
+                // P1-4 (F3) — same reasoning: if the commit RPC itself never
+                // came back, we don't actually know Steam accepted the file.
+                // Treating this as success (previous behavior) could leave
+                // local/cloud silently out of sync while everything
+                // downstream believed the write landed.
                 PatchHelper.Log($"[Cloud] Commit failed for {path}: {ex.Message}");
+                uploadSucceeded = false;
+                commitFailure = ex;
             }
         }
 
         if (!uploadSucceeded)
-            throw new InvalidOperationException($"Cloud upload failed for {path}");
+            throw new InvalidOperationException($"Cloud upload failed for {path}", commitFailure);
 
         PatchHelper.Log($"[Cloud] Wrote {bytes.Length} bytes to {path} (compressed={compressed})");
     }

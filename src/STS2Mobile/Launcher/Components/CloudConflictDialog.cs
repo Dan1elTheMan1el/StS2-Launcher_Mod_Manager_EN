@@ -75,16 +75,24 @@ public class CloudConflictDialog : ColorRect
             EmptyCardHeight = Px(80),
             CardsRowSeparation = Px(16),
             ButtonRowSeparation = Px(12),
-            ButtonHeight = Px(48),
+            // Floored at the main launcher screen's own action-button height
+            // (StyledButton.MainActionHeight) — user report: "save manager
+            // 글자가 너무 작아". On a short viewport `d` alone shrank this well
+            // below the button the user tapped to open the dialog.
+            ButtonHeight = Math.Max(StyledButton.MainActionHeight, Px(48)),
             CancelWidth = Px(140),
             ChoiceWidth = Px(160),
-            // Font sizes — floor at readable sizes
-            TitleFs = Fs(22, 14),
+            // Font sizes — floor at readable sizes. Title/button floors are
+            // pinned to (or above) StyledButton.MainActionFontSize so the
+            // dialog never reads smaller than the main screen's buttons; card
+            // body text keeps its previous, lower floors by design (dense
+            // stat rows, not the primary tap targets).
+            TitleFs = Fs(22, 16),
             SubtitleFs = Fs(13, 10),
             CardTitleFs = Fs(16, 11),
             CardRowFs = Fs(12, 9),
             BadgeFs = Fs(11, 8),
-            ButtonFs = Fs(14, 11),
+            ButtonFs = Fs(14, StyledButton.MainActionFontSize),
         };
     }
 
@@ -131,6 +139,13 @@ public class CloudConflictDialog : ColorRect
         dialogBox.AddChild(vbox);
 
         bool isInSync = decision == SyncDecision.Identical || decision == SyncDecision.NoData;
+        // Unverified means the byte-compare that would decide Conflict vs
+        // Identical never actually completed (transient cloud read failure) —
+        // there's no reliable "differs" evidence, so this must NOT offer the
+        // KeepLocal/KeepCloud choice below. Grouped with isInSync purely for
+        // button visibility; the title/subtitle below still tells the true story.
+        bool isUnverified = decision == SyncDecision.Unverified;
+        bool showChoiceButtons = !isInSync && !isUnverified;
         var (titleText, subtitleText) = decision switch
         {
             SyncDecision.Identical => (
@@ -148,6 +163,10 @@ public class CloudConflictDialog : ColorRect
             SyncDecision.CloudOnly => (
                 "세이브 데이터 동기화",
                 "이 디바이스에 진행도가 없습니다.\nSteam Cloud의 진행도를 가져올까요?"
+            ),
+            SyncDecision.Unverified => (
+                "세이브 상태 확인 불가",
+                "일시적으로 Steam Cloud 상태를 확인하지 못했습니다.\n잠시 후 다시 시도해 주세요."
             ),
             _ => (
                 "세이브 데이터 충돌",
@@ -190,12 +209,14 @@ public class CloudConflictDialog : ColorRect
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
 
-        // When sides are in sync (Identical / NoData), the local/cloud buttons
-        // would just trigger a redundant push or pull of identical data. Hide
-        // them and offer only a close action so the dialog is purely
+        // When sides are in sync (Identical / NoData) or the compare never
+        // completed (Unverified), the local/cloud buttons would either be a
+        // redundant push/pull of identical data or — for Unverified — a
+        // destructive choice made without ever having compared the two sides.
+        // Hide them and offer only a close action so the dialog is purely
         // informational.
         var cancelBtn = new StyledButton(
-            isInSync ? "닫기" : "취소",
+            showChoiceButtons ? "취소" : "닫기",
             scale,
             fontSize: sz.ButtonFs,
             height: sz.ButtonHeight
@@ -207,7 +228,7 @@ public class CloudConflictDialog : ColorRect
         cancelBtn.Pressed += () => Resolve(CloudConflictChoice.Cancel);
         buttonRow.AddChild(cancelBtn);
 
-        if (!isInSync)
+        if (showChoiceButtons)
         {
             var localBtn = new StyledButton(
                 "로컬 유지",

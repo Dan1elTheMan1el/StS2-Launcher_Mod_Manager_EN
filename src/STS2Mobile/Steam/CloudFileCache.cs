@@ -20,6 +20,11 @@ public class CloudFileCache
     private DateTimeOffset _nextRetryTime = DateTimeOffset.MinValue;
     private readonly object _loadLock = new();
 
+    // P0-1 — guards CleanStaleUploadBatchIfAny so it only ever runs once per
+    // instance (i.e. once per app session), even though LoadFileList itself
+    // can run again later (Refresh()) or be retried on failure.
+    private bool _staleBatchCleanupAttempted;
+
     public CloudFileCache(SteamConnection connection)
     {
         _connection = connection;
@@ -137,6 +142,39 @@ public class CloudFileCache
         EnsureLoaded();
     }
 
+    // P1-1 (A1) — rollback-safe variant for callers that must never let a
+    // failed re-enumerate leave the cache emptier than it was before calling
+    // this. Refresh() above unconditionally clears _files before retrying —
+    // if that retry then fails (transient network hiccup), every
+    // FileExists/GetFileSize call for the rest of the caller's pass would see
+    // an EMPTY cache instead of just stale data, which could misfire a sync
+    // decision into "cloud has nothing, push everything". This snapshots the
+    // current (good) state first and rolls back to it if the fresh enumerate
+    // doesn't actually succeed, so a failed refresh degrades to exactly the
+    // pre-refresh stale-snapshot behavior instead of an empty one.
+    public void SafeRefresh()
+    {
+        if (!_loaded)
+        {
+            // Nothing successfully loaded yet this session — nothing to
+            // protect, just attempt a normal load.
+            EnsureLoaded();
+            return;
+        }
+
+        var previousFiles = new Dictionary<string, CloudFileInfo>(_files);
+        Refresh();
+
+        if (!_loaded)
+        {
+            PatchHelper.Log("[Cloud] Refresh failed, restoring previous cache snapshot");
+            _files.Clear();
+            foreach (var kvp in previousFiles)
+                _files[kvp.Key] = kvp.Value;
+            _loaded = true;
+        }
+    }
+
     // Drives EnumerateUserFiles on a worker thread and waits for either success
     // or MaxRetries exhaustion. The launcher gates SaveManager construction on
     // this — when it returns false, the launcher falls back to a local-only
@@ -239,6 +277,57 @@ public class CloudFileCache
         }
 
         PatchHelper.Log($"[Cloud] Enumerated {_files.Count} cloud files");
+
+        // P0-1 — this is the first confirmed-successful cloud RPC of the
+        // session (connection is up, logged on, and just proved it works), so
+        // it's the safest point to also check for a batch left open by a
+        // prior session that died mid-upload. See PendingUploadBatch for why.
+        CleanStaleUploadBatchIfAny();
+    }
+
+    // Best-effort, once per session: if a marker from PendingUploadBatch.Mark
+    // survived (previous session ended before EndSaveBatch's finally could
+    // call CompleteAppUploadBatchBlocking), close that batch now with a
+    // failure eresult so Steam stops treating it as still-pending. Whether
+    // this RPC succeeds or fails, the marker is cleared either way — retrying
+    // forever every session on a batch Steam may have already expired
+    // server-side would be pointless, and the whole point of this path is
+    // fail-open cleanup, not a guaranteed-delivery mechanism.
+    private void CleanStaleUploadBatchIfAny()
+    {
+        if (_staleBatchCleanupAttempted)
+            return;
+        _staleBatchCleanupAttempted = true;
+
+        if (!PendingUploadBatch.TryRead(out var staleBatchId))
+            return;
+
+        try
+        {
+            _connection
+                .SendCloud<CCloud_CompleteAppUploadBatch_Request, CCloud_CompleteAppUploadBatch_Response>(
+                    "CompleteAppUploadBatchBlocking",
+                    new CCloud_CompleteAppUploadBatch_Request
+                    {
+                        appid = AppId,
+                        batch_id = staleBatchId,
+                        batch_eresult = (uint)SteamKit2.EResult.Fail,
+                    }
+                )
+                .GetAwaiter()
+                .GetResult();
+            PatchHelper.Log($"[Cloud] Cleaned stale upload batch {staleBatchId}");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"[Cloud] Stale upload batch {staleBatchId} cleanup failed (will not retry): {ex.Message}"
+            );
+        }
+        finally
+        {
+            PendingUploadBatch.Clear();
+        }
     }
 
     private class CloudFileInfo

@@ -4,9 +4,24 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using MegaCrit.Sts2.Core.Saves;
-using MegaCrit.Sts2.Core.Saves.Managers;
 
 namespace STS2Mobile.Steam;
+
+// P0-1 — honest outcome for a manual push/pull instead of the caller seeing
+// "complete" the instant the method returns while uploads are still queued.
+//   Success  — everything that should have moved, did.
+//   Failed   — the operation finished running, but at least one file didn't
+//              make it (per-file loop failure, or — Push only — the upload
+//              batch itself reported a failure: see SteamKit2CloudSaveStore.
+//              LastBatchHadFailures).
+//   TimedOut — Push only: the write queue never drained within the wait
+//              budget, so the fate of the in-flight/queued uploads is unknown.
+public enum CloudBatchOutcome
+{
+    Success,
+    Failed,
+    TimedOut,
+}
 
 // Stateless cloud sync coordinator: auto sync and manual push/pull.
 //
@@ -153,14 +168,34 @@ public static class CloudSyncCoordinator
         }
     }
 
-    // Returns Task (not async): the per-sync cloud backup loop that needed an await
-    // was removed in the Part A redesign, so the body is now fully synchronous.
-    public static Task ManualPushAllAsync(string accountName, string refreshToken)
+    // Genuinely async (unlike before P0-2): the recovered-session gate below
+    // needs to await a user confirmation dialog without ever blocking a
+    // thread synchronously (see ProgressRecoveryGate). Still only ever called
+    // from inside a Task.Run (LauncherController), so the rest of the body
+    // stays exactly as blocking as it was — this is what turns EndSaveBatch's
+    // fire-and-forget enqueue into an honest, awaitable result instead of the
+    // previous "returns instantly, always says complete" lie.
+    public static async Task<CloudBatchOutcome> ManualPushAllAsync(
+        string accountName,
+        string refreshToken
+    )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
         var cloudStore =
             SteamKit2CloudSaveStore.Instance
             ?? new SteamKit2CloudSaveStore(accountName, refreshToken);
+
+        // P0-1: force the cloud file cache to load now (if it hasn't already
+        // this session) BEFORE opening a new batch below. Cache-loading is
+        // what triggers the stale-upload-batch cleanup (see CloudFileCache.
+        // LoadFileList / CleanStaleUploadBatchIfAny). Pull gets this for free
+        // via GetSaveFilePaths(cloudStore) touching the cache first, but Push
+        // walks the LOCAL store for its path list and — when every local file
+        // is non-trivial in size — WriteFile's GuardB never touches the cache
+        // either. Without this, pressing Push as the very first cloud action
+        // of a fresh launcher session could open a new batch while a batch
+        // left dangling by a prior session's crash is still open server-side.
+        await cloudStore.WaitForCacheReadyAsync(15_000).ConfigureAwait(false);
 
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
@@ -168,6 +203,7 @@ public static class CloudSyncCoordinator
         cloudStore.BeginSaveBatch();
         int count = 0;
         int deletedCloud = 0;
+        bool anyLoopFailure = false;
         foreach (var path in paths)
         {
             try
@@ -183,6 +219,23 @@ public static class CloudSyncCoordinator
                     continue;
                 }
 
+                // P0-2 — a recovered-session progress.save push gets a
+                // one-time user confirmation before it's allowed to overwrite
+                // an existing cloud copy (see ProgressRecoveryGate). No-op
+                // (returns true immediately) unless this session's load
+                // actually underwent recovery.
+                if (
+                    IsProgressFile(path)
+                    && !await ProgressRecoveryGate.ShouldAllowPushAsync(cloudStore, path)
+                        .ConfigureAwait(false)
+                )
+                {
+                    PatchHelper.Log(
+                        $"[Cloud] Push: skipped {path} (recovered-session, user declined)"
+                    );
+                    continue;
+                }
+
                 string content = localStore.ReadFile(path);
                 PatchHelper.Log($"[Cloud] Push: queuing {path} ({content.Length} bytes)");
                 cloudStore.WriteFile(path, content);
@@ -191,17 +244,50 @@ public static class CloudSyncCoordinator
             catch (Exception ex)
             {
                 PatchHelper.Log($"[Cloud] Push: failed for {path}: {ex.Message}");
+                anyLoopFailure = true;
             }
         }
         cloudStore.EndSaveBatch();
 
+        // P0-1: EndSaveBatch only enqueues the batch upload — without waiting
+        // for it to drain, "complete" below would still be the same lie the
+        // UI used to see. Flush blocks until the write queue (the batch
+        // upload plus any mirror-deletes queued above) finishes or the budget
+        // runs out; only once it reports drained can LastBatchHadFailures be
+        // trusted (see SteamKit2CloudSaveStore.Flush / EndSaveBatch).
+        bool drained = cloudStore.Flush(timeoutMs: 120_000);
+
+        CloudBatchOutcome outcome;
+        if (!drained)
+        {
+            outcome = CloudBatchOutcome.TimedOut;
+            PatchHelper.Log("[Cloud] Push: timed out waiting for upload queue to drain");
+        }
+        else if (anyLoopFailure || cloudStore.LastBatchHadFailures)
+        {
+            outcome = CloudBatchOutcome.Failed;
+        }
+        else
+        {
+            outcome = CloudBatchOutcome.Success;
+        }
+
         PatchHelper.Log(
-            $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files mirror-deleted"
+            $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files "
+                + $"mirror-deleted, outcome={outcome}"
         );
-        return Task.CompletedTask;
+        return outcome;
     }
 
-    public static async Task ManualPullAllAsync(string accountName, string refreshToken)
+    // Unlike Push, Pull has no batch/write-queue involved — every download and
+    // local write below is already awaited in-line, so by the time this
+    // method returns everything has genuinely finished (no TimedOut case).
+    // The only honesty gap was the return value never reflecting per-file
+    // failures — fixed by tracking anyFailure below.
+    public static async Task<CloudBatchOutcome> ManualPullAllAsync(
+        string accountName,
+        string refreshToken
+    )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
         var cloudStore =
@@ -214,6 +300,7 @@ public static class CloudSyncCoordinator
         int downloaded = 0;
         int skipped = 0;
         int deletedLocal = 0;
+        bool anyFailure = false;
         foreach (var path in paths)
         {
             try
@@ -267,18 +354,23 @@ public static class CloudSyncCoordinator
                         PatchHelper.Log(
                             $"[Cloud] Pull: stale-cache delete failed for {path}: {delEx.Message}"
                         );
+                        anyFailure = true;
                     }
                 }
                 else
                 {
                     PatchHelper.Log($"[Cloud] Pull: failed for {path}: {ex.Message}");
+                    anyFailure = true;
                 }
             }
         }
 
+        var outcome = anyFailure ? CloudBatchOutcome.Failed : CloudBatchOutcome.Success;
         PatchHelper.Log(
-            $"[Cloud] Pull complete: {downloaded} downloaded, {skipped} not in cloud, {deletedLocal} local files mirror-deleted"
+            $"[Cloud] Pull complete: {downloaded} downloaded, {skipped} not in cloud, "
+                + $"{deletedLocal} local files mirror-deleted, outcome={outcome}"
         );
+        return outcome;
     }
 
     public static List<string> GetSaveFilePaths(ISaveStore store)
@@ -292,6 +384,26 @@ public static class CloudSyncCoordinator
     {
         var paths = new List<string>();
         CollectProfilePaths(paths, store.GetFilesInDirectory, store.DirectoryExists);
+        return paths;
+    }
+
+    // Save Manager per-profile apply: history run files for ONE profile, under
+    // whatever mod state UserDataPathProvider.IsRunningModded is currently set
+    // to (caller owns the toggle — same convention as SavePathCompat callers
+    // elsewhere in this file). Unlike GetSaveFilePaths, this never walks all
+    // 3 profiles × 2 mod states — the whole point is to scope a resolve to a
+    // single slot so it can't touch the other 5.
+    public static List<string> GetHistoryFilePathsForProfile(ISaveStore store, int profileId)
+    {
+        var paths = new List<string>();
+        AddHistoryFiles(paths, store.GetFilesInDirectory, store.DirectoryExists, profileId);
+        return paths;
+    }
+
+    public static List<string> GetHistoryFilePathsForProfile(ICloudSaveStore store, int profileId)
+    {
+        var paths = new List<string>();
+        AddHistoryFiles(paths, store.GetFilesInDirectory, store.DirectoryExists, profileId);
         return paths;
     }
 
@@ -310,10 +422,10 @@ public static class CloudSyncCoordinator
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int i = 1; i <= 3; i++)
                 {
-                    paths.Add(ProgressSaveManager.GetProgressPathForProfile(i));
-                    paths.Add(RunSaveManager.GetRunSavePath(i, "current_run.save"));
-                    paths.Add(RunSaveManager.GetRunSavePath(i, "current_run_mp.save"));
-                    paths.Add(PrefsSaveManager.GetPrefsPath(i));
+                    paths.Add(SavePathCompat.GetProgressPathForProfile(i));
+                    paths.Add(SavePathCompat.GetRunSavePath(i, "current_run.save"));
+                    paths.Add(SavePathCompat.GetRunSavePath(i, "current_run_mp.save"));
+                    paths.Add(SavePathCompat.GetPrefsPath(i));
                     AddHistoryFiles(paths, getFiles, dirExists, i);
                 }
             }
@@ -331,7 +443,7 @@ public static class CloudSyncCoordinator
         int profileId
     )
     {
-        var historyDir = RunHistorySaveManager.GetHistoryPath(profileId);
+        var historyDir = SavePathCompat.GetHistoryPath(profileId);
         if (!dirExists(historyDir))
             return;
 
@@ -361,6 +473,16 @@ public static class CloudSyncCoordinator
     {
         var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
         return lower.EndsWith("/current_run.save") || lower.EndsWith("/current_run_mp.save");
+    }
+
+    // P0-2: identifies progress.save among the various per-profile paths
+    // ManualPushAllAsync walks, so only that file (not current_run/prefs/
+    // history) gets routed through ProgressRecoveryGate. Same test
+    // SaveProgressComparer.cs already uses to recognize progress.save.
+    private static bool IsProgressFile(string path)
+    {
+        var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
+        return lower.Contains("progress") && lower.EndsWith(".save");
     }
 
     // RunSaveManager keeps a .backup sibling per save and falls back to it when
