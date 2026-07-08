@@ -160,6 +160,9 @@ public class LauncherController
         _view.ModManagerButton.Pressed += OnModManagerPressed;
         _view.ModsButton.Pressed += OnModsPressed;
         _view.ModManager.BackPressed += OnModManagerBackPressed;
+        // Issue #58 phase 4b: the Mod Hub's Workshop/Subscribed/Downloads tabs need
+        // the launcher's SteamConnection + session state to issue PublishedFile RPCs.
+        _view.ModManager.Configure(_model);
         _view.DebugButton.Pressed += OnDebugTogglePressed;
         UpdateDebugButtonLabel();
 

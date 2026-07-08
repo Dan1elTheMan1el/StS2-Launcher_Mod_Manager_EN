@@ -57,6 +57,12 @@ public class LauncherModel : IDisposable
     public string FailReason => _failReason;
     public SessionState SessionState => _state;
 
+    // Issue #58 phase 4b: exposes the launcher's own SteamConnection so the Mod
+    // Hub's Workshop tabs can issue PublishedFile RPCs without opening a second
+    // connection. Null until EnsureConnectedAsync (or Connect/LoginAsync) has run
+    // at least once — callers must check SessionState == LoggedIn alongside this.
+    public SteamConnection Connection => _connection;
+
     public event Action<SessionState> SessionStateChanged;
     public event Action<string> LogReceived;
     public event Action<bool> CodeNeeded;

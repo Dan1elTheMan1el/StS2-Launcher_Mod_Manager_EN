@@ -1,38 +1,61 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using STS2Mobile.Launcher.Components;
 using STS2Mobile.Modding;
+using STS2Mobile.Steam;
 
 namespace STS2Mobile.Launcher.Sections;
 
-// Full-screen Mod Hub shown when the user taps "MOD MANAGER" on the launch
-// screen (issue #58: revived from the pre-0.3.0 WIP flow and promoted from the
-// left column to the whole panel). Two tabs: WORKSHOP (placeholder until the
-// in-app browser lands in later phases) and INSTALLED, which scans
-// AppPaths.ExternalModsDir, renders one ModListRow per mod grouped by source
-// (Workshop subscription vs local install), and provides import/reorder/
-// toggle/remove actions wired directly to ModConfig and ModImporter.
+// Full-screen Mod Hub shown when the user taps "MOD MANAGER" on the launch screen
+// (issue #58). Four tabs:
+//   WORKSHOP   — WorkshopBrowserPane: search/sort/tag browser, subscribe/unsubscribe.
+//   SUBSCRIBED — WorkshopSubscribedPane: synced subscription list + unsubscribe.
+//   LOCAL      — this class: ModScanner-based list of non-Workshop mods, import/remove.
+//   DOWNLOADS  — WorkshopDownloadsPane: live view of the shared WorkshopDownloadQueue.
+// The Workshop tabs share a single SteamConnection (via the LauncherModel injected
+// through Configure()) and a single WorkshopDownloadQueue (created lazily on first
+// successful connection, see EnsureSessionAsync), so download progress only ever
+// shows in one place regardless of which tab kicked a download off.
 public class ModManagerSection : VBoxContainer
 {
     public event Action BackPressed;
     public event Action<string, Action, Action> ConfirmationRequested;
 
+    private const int TabWorkshop = 0;
+    private const int TabSubscribed = 1;
+    private const int TabLocal = 2;
+    private const int TabDownloads = 3;
+
+    private static readonly Color InfoColor = new(0.75f, 0.75f, 0.8f);
+    private static readonly Color WarnColor = new(0.95f, 0.75f, 0.3f);
+    private static readonly Color ErrorColor = new(0.95f, 0.4f, 0.4f);
+
     private readonly float _scale;
+    private readonly StyledButton[] _tabButtons;
+    private readonly WorkshopBrowserPane _workshopPane;
+    private readonly WorkshopSubscribedPane _subscribedPane;
+    private readonly WorkshopDownloadsPane _downloadsPane;
+
+    // --- LOCAL tab widgets (non-Workshop mods; Import/Remove) ------------------
+    private readonly VBoxContainer _localPane;
     private readonly VBoxContainer _listContainer;
     private readonly StyledLabel _statusLabel;
     private readonly StyledButton _importButton;
     private readonly StyledButton _refreshButton;
-    private readonly StyledButton _backButton;
     private readonly StyledButton _permissionButton;
-    private readonly StyledButton _workshopTabButton;
-    private readonly StyledButton _installedTabButton;
-    private readonly VBoxContainer _workshopPane;
-    private readonly VBoxContainer _installedPane;
 
+    private readonly StyledButton _backButton;
+
+    private LauncherModel _model;
+    private WorkshopDownloadQueue _queue;
+    private readonly object _queueLock = new();
+    private int _activeTab = TabLocal;
     private bool _importInFlight;
 
     public ModManagerSection(float scale)
@@ -44,65 +67,62 @@ public class ModManagerSection : VBoxContainer
         AddThemeConstantOverride("separation", (int)(8 * scale));
 
         var header = new HBoxContainer();
-        header.AddThemeConstantOverride("separation", (int)(8 * scale));
+        header.AddThemeConstantOverride("separation", (int)(6 * scale));
         AddChild(header);
 
-        var title = new StyledLabel("Mod Manager", scale, fontSize: 20);
-        title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        var title = new StyledLabel("Mod Hub", scale, fontSize: 18);
         header.AddChild(title);
 
-        _workshopTabButton = new StyledButton("WORKSHOP", scale, fontSize: 14, height: 40);
-        _workshopTabButton.ToggleMode = true;
-        _workshopTabButton.CustomMinimumSize = new Vector2((int)(140 * scale), 0);
-        _workshopTabButton.Pressed += () => SelectTab(workshop: true);
-        header.AddChild(_workshopTabButton);
+        var tabNames = new[] { "WORKSHOP", "SUBSCRIBED", "LOCAL", "DOWNLOADS" };
+        _tabButtons = new StyledButton[tabNames.Length];
+        for (int i = 0; i < tabNames.Length; i++)
+        {
+            var idx = i;
+            var btn = new StyledButton(tabNames[i], scale, fontSize: 12, height: 38);
+            btn.ToggleMode = true;
+            btn.CustomMinimumSize = new Vector2((int)(96 * scale), 0);
+            btn.Pressed += () => SelectTab(idx);
+            header.AddChild(btn);
+            _tabButtons[i] = btn;
+        }
 
-        _installedTabButton = new StyledButton("INSTALLED", scale, fontSize: 14, height: 40);
-        _installedTabButton.ToggleMode = true;
-        _installedTabButton.CustomMinimumSize = new Vector2((int)(140 * scale), 0);
-        _installedTabButton.Pressed += () => SelectTab(workshop: false);
-        header.AddChild(_installedTabButton);
-
-        // Placeholder pane until the in-app browser ships (issue #58 phase 4).
-        _workshopPane = new VBoxContainer();
-        _workshopPane.SizeFlagsVertical = SizeFlags.ExpandFill;
-        _workshopPane.AddThemeConstantOverride("separation", (int)(8 * scale));
+        _workshopPane = new WorkshopBrowserPane(scale);
+        _workshopPane.ConfirmationRequested += (msg, ok, cancel) =>
+            ConfirmationRequested?.Invoke(msg, ok, cancel);
         AddChild(_workshopPane);
 
-        var workshopTitle = new StyledLabel(
-            "Steam Workshop integration is under construction.",
-            scale,
-            fontSize: 14
-        );
-        workshopTitle.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _workshopPane.AddChild(workshopTitle);
+        _subscribedPane = new WorkshopSubscribedPane(scale);
+        _subscribedPane.ConfirmationRequested += (msg, ok, cancel) =>
+            ConfirmationRequested?.Invoke(msg, ok, cancel);
+        AddChild(_subscribedPane);
 
-        var workshopHint = new StyledLabel(
-            "Browsing, subscribing and auto-downloading Workshop mods will arrive in a future launcher update.",
+        // --- LOCAL pane ----------------------------------------------------
+        _localPane = new VBoxContainer();
+        _localPane.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _localPane.AddThemeConstantOverride("separation", (int)(8 * scale));
+        AddChild(_localPane);
+
+        var localHint = new StyledLabel(
+            "Mod activation is managed in the game's Mods menu.",
             scale,
             fontSize: 12
         );
-        workshopHint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        workshopHint.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.7f));
-        _workshopPane.AddChild(workshopHint);
-
-        _installedPane = new VBoxContainer();
-        _installedPane.SizeFlagsVertical = SizeFlags.ExpandFill;
-        _installedPane.AddThemeConstantOverride("separation", (int)(8 * scale));
-        AddChild(_installedPane);
+        localHint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        localHint.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
+        _localPane.AddChild(localHint);
 
         _statusLabel = new StyledLabel("", scale, fontSize: 12);
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        _installedPane.AddChild(_statusLabel);
+        _localPane.AddChild(_statusLabel);
 
         _permissionButton = new StyledButton("Grant Storage Permission", scale, fontSize: 14);
         _permissionButton.Visible = false;
         _permissionButton.Pressed += OnGrantPermissionPressed;
-        _installedPane.AddChild(_permissionButton);
+        _localPane.AddChild(_permissionButton);
 
         var actionRow = new HBoxContainer();
         actionRow.AddThemeConstantOverride("separation", (int)(6 * scale));
-        _installedPane.AddChild(actionRow);
+        _localPane.AddChild(actionRow);
 
         _importButton = new StyledButton("Import Mod (.zip)...", scale, fontSize: 14);
         _importButton.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -111,34 +131,69 @@ public class ModManagerSection : VBoxContainer
 
         _refreshButton = new StyledButton("Refresh", scale, fontSize: 14);
         _refreshButton.CustomMinimumSize = new Vector2((int)(100 * scale), 0);
-        _refreshButton.Pressed += Refresh;
+        _refreshButton.Pressed += RefreshLocal;
         actionRow.AddChild(_refreshButton);
 
-        var scroll = new ScrollContainer();
-        scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
-        scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
-        _installedPane.AddChild(scroll);
+        var localScroll = new ScrollContainer();
+        localScroll.SizeFlagsVertical = SizeFlags.ExpandFill;
+        localScroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
+        _localPane.AddChild(localScroll);
 
         _listContainer = new VBoxContainer();
         _listContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _listContainer.AddThemeConstantOverride("separation", (int)(6 * scale));
-        scroll.AddChild(_listContainer);
+        localScroll.AddChild(_listContainer);
+
+        // --- DOWNLOADS pane --------------------------------------------------
+        _downloadsPane = new WorkshopDownloadsPane(scale);
+        AddChild(_downloadsPane);
 
         _backButton = new StyledButton("BACK", scale, fontSize: 14);
         _backButton.Pressed += () => BackPressed?.Invoke();
         AddChild(_backButton);
 
-        SelectTab(workshop: false);
+        SelectTab(TabLocal);
     }
 
-    private void SelectTab(bool workshop)
+    // Injects the launcher's session/connection so the Workshop tabs can issue
+    // PublishedFile RPCs. Called once from LauncherController.Start() — see
+    // LauncherModel.Connection for why this doesn't hold the SteamConnection
+    // itself (it may not exist yet on the fast/ReadyToLaunch path).
+    public void Configure(LauncherModel model) => _model = model;
+
+    // Called by LauncherView.ShowModManager() every time the hub is opened.
+    // Re-activates whichever tab is currently selected (LOCAL always rescans;
+    // WORKSHOP/SUBSCRIBED/DOWNLOADS re-check the session and refresh).
+    public void Refresh() => SelectTab(_activeTab);
+
+    private void SelectTab(int index)
     {
-        _workshopTabButton.SetPressedNoSignal(workshop);
-        _installedTabButton.SetPressedNoSignal(!workshop);
-        ApplyTabStyle(_workshopTabButton, workshop);
-        ApplyTabStyle(_installedTabButton, !workshop);
-        _workshopPane.Visible = workshop;
-        _installedPane.Visible = !workshop;
+        _activeTab = index;
+        for (int i = 0; i < _tabButtons.Length; i++)
+        {
+            _tabButtons[i].SetPressedNoSignal(i == index);
+            ApplyTabStyle(_tabButtons[i], i == index);
+        }
+        _workshopPane.Visible = index == TabWorkshop;
+        _subscribedPane.Visible = index == TabSubscribed;
+        _localPane.Visible = index == TabLocal;
+        _downloadsPane.Visible = index == TabDownloads;
+
+        switch (index)
+        {
+            case TabWorkshop:
+                _workshopPane.Activate(EnsureSessionAsync);
+                break;
+            case TabSubscribed:
+                _subscribedPane.Activate(EnsureSessionAsync);
+                break;
+            case TabLocal:
+                RefreshLocal();
+                break;
+            case TabDownloads:
+                _downloadsPane.RenderFromQueue();
+                break;
+        }
     }
 
     private void ApplyTabStyle(Button button, bool active)
@@ -153,7 +208,54 @@ public class ModManagerSection : VBoxContainer
         button.AddThemeStyleboxOverride("pressed", style);
     }
 
-    public void Refresh()
+    // Ensures the launcher's Steam session is connected and logged in, then lazily
+    // creates the single WorkshopDownloadQueue shared by all Workshop tabs on first
+    // success. Safe to call from any thread (Godot node touches are deferred).
+    private async Task<(bool ok, SteamConnection conn)> EnsureSessionAsync()
+    {
+        if (_model == null)
+            return (false, null);
+
+        await _model.EnsureConnectedAsync().ConfigureAwait(false);
+        if (_model.SessionState != SessionState.LoggedIn || _model.Connection == null)
+            return (false, null);
+
+        lock (_queueLock)
+        {
+            if (_queue == null)
+            {
+                var q = new WorkshopDownloadQueue(_model.Connection);
+                q.Changed += OnQueueChanged;
+                _queue = q;
+                Callable
+                    .From(() =>
+                    {
+                        _downloadsPane.SetQueue(_queue);
+                        _subscribedPane.SetQueue(_queue);
+                        _workshopPane.SetQueue(_queue);
+                    })
+                    .CallDeferred();
+            }
+        }
+        return (true, _model.Connection);
+    }
+
+    // WorkshopDownloadQueue.Changed fires from its worker's pool thread.
+    private void OnQueueChanged()
+    {
+        Callable
+            .From(() =>
+            {
+                _downloadsPane.RenderFromQueue();
+                if (_subscribedPane.Visible)
+                    _subscribedPane.RenderList();
+            })
+            .CallDeferred();
+    }
+
+    // --- LOCAL tab ---------------------------------------------------------
+
+    private void RefreshLocal()
     {
         ClearList();
 
@@ -161,7 +263,7 @@ public class ModManagerSection : VBoxContainer
         {
             SetStatus(
                 "Storage permission is required to manage mods.",
-                new Color(0.95f, 0.75f, 0.3f)
+                WarnColor
             );
             _permissionButton.Visible = true;
             _importButton.Disabled = true;
@@ -174,75 +276,132 @@ public class ModManagerSection : VBoxContainer
 
         var scanned = ModScanner.Scan();
         var cfg = ModConfig.Load();
-        var reconciled = cfg.Reconcile(scanned.Select(m => m.Id));
+        // Reconcile keeps the registry (mod_config.json) in sync with what's on
+        // disk; enabled/order are no longer read by this UI (see class comment on
+        // ModListRow), but the game itself still relies on Reconcile pruning
+        // stale entries.
+        cfg.Reconcile(scanned.Select(m => m.Id));
 
-        var byId = scanned.ToDictionary(m => m.Id, m => m);
-        var orderedInfos = new List<ModEntryInfo>();
-        foreach (var entry in reconciled)
-        {
-            if (byId.TryGetValue(entry.Id, out var info))
-                orderedInfos.Add(info);
-        }
+        var localInfos = scanned
+            .Where(m =>
+            {
+                var entry = cfg.Get(m.Id);
+                return entry == null || !entry.IsWorkshop;
+            })
+            .OrderBy(m => m.Manifest.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var rootManifests = ScanRootLevelManifests();
 
-        if (orderedInfos.Count == 0)
+        if (localInfos.Count == 0 && rootManifests.Count == 0)
         {
             SetStatus(
-                "No mods installed. Tap \"Import Mod\" and pick one or more .zip files.",
-                new Color(0.75f, 0.75f, 0.8f)
+                "No local mods installed. Tap \"Import Mod\" and pick one or more .zip files.",
+                InfoColor
             );
             return;
         }
 
-        SetStatus($"{orderedInfos.Count} mod(s) installed.", new Color(0.75f, 0.75f, 0.8f));
+        SetStatus($"{localInfos.Count} local mod(s) installed.", InfoColor);
 
-        // Rows are grouped by source (Workshop subscription vs local install)
-        // for display, but Order — and therefore ▲/▼ — stays global because it
-        // is the game's load order across both groups. Reordering near a group
-        // boundary can swap with a row rendered in the other group.
-        var workshopIndices = new List<int>();
-        var localIndices = new List<int>();
-        for (int i = 0; i < orderedInfos.Count; i++)
+        var gameVersion = TryReadGameVersion();
+        foreach (var info in localInfos)
         {
-            var entry = cfg.Get(orderedInfos[i].Id);
-            (entry?.IsWorkshop == true ? workshopIndices : localIndices).Add(i);
+            string warning = null;
+            if (
+                !string.IsNullOrWhiteSpace(info.Manifest.MinGameVersion)
+                && gameVersion != null
+                && CompareVersions(info.Manifest.MinGameVersion, gameVersion) > 0
+            )
+                warning = $"Requires game {info.Manifest.MinGameVersion}+";
+
+            var row = new ModListRow(info, _scale, versionWarning: warning);
+            row.RemovePressed += () => OnRowRemovePressed(info);
+            _listContainer.AddChild(row);
         }
 
-        if (workshopIndices.Count > 0)
+        foreach (var (manifest, path) in rootManifests)
         {
-            AddGroupHeader("WORKSHOP SUBSCRIPTIONS");
-            foreach (var i in workshopIndices)
-                AddModRow(orderedInfos, cfg, i, workshopManaged: true);
-            AddGroupHeader("LOCAL MODS");
+            var info = new ModEntryInfo
+            {
+                Path = path,
+                TopLevelDir = null,
+                Manifest = manifest,
+                ReadmeSnippet = null,
+            };
+            var row = new ModListRow(info, _scale, removable: false, badge: "Unmanaged — root files");
+            _listContainer.AddChild(row);
         }
-        foreach (var i in localIndices)
-            AddModRow(orderedInfos, cfg, i, workshopManaged: false);
     }
 
-    private void AddModRow(
-        List<ModEntryInfo> orderedInfos,
-        ModConfig cfg,
-        int index,
-        bool workshopManaged
-    )
+    // Root-level "*.json" manifests directly under Mods/ (not inside a folder) are
+    // loaded by the game but have no folder the launcher can delete — ModScanner
+    // only logs a warning for these (WarnRootLevelManifests); this mirrors that
+    // scan to surface them as read-only rows instead.
+    private static List<(ModManifest Manifest, string Path)> ScanRootLevelManifests()
     {
-        var info = orderedInfos[index];
-        var entry = cfg.Get(info.Id);
-        var canUp = index > 0;
-        var canDown = index < orderedInfos.Count - 1;
-        var row = new ModListRow(info, entry.Enabled, canUp, canDown, _scale, workshopManaged);
-        var capturedId = info.Id;
-        row.Toggled += on => OnRowToggled(capturedId, on);
-        row.MoveUpPressed += () => OnRowMoved(capturedId, -1);
-        row.MoveDownPressed += () => OnRowMoved(capturedId, +1);
-        row.RemovePressed += () => OnRowRemovePressed(info);
-        _listContainer.AddChild(row);
+        var result = new List<(ModManifest, string)>();
+        try
+        {
+            foreach (var json in Directory.GetFiles(AppPaths.ExternalModsDir, "*.json"))
+            {
+                if (
+                    string.Equals(
+                        Path.GetFileName(json),
+                        "mod_config.json",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                    continue;
+
+                var m = ModManifest.TryParse(json);
+                if (m != null && m.IsValid())
+                    result.Add((m, json));
+            }
+        }
+        catch { }
+        return result;
     }
 
-    private void AddGroupHeader(string text)
+    // Reads the currently downloaded game's version straight from
+    // <DataDir>/game/release_info.json — the same file ReleaseInfoPatches falls
+    // back to for the game's own version display. No game-assembly dependency.
+    private static string TryReadGameVersion()
     {
-        var label = new StyledLabel(text, _scale, fontSize: 12);
-        label.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
-        _listContainer.AddChild(label);
+        try
+        {
+            var path = Path.Combine(OS.GetDataDir(), "game", "release_info.json");
+            if (!File.Exists(path))
+                return null;
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (doc.RootElement.TryGetProperty("version", out var v))
+                return v.GetString();
+        }
+        catch { }
+        return null;
+    }
+
+    // Dotted-numeric version comparison with a graceful fallback (non-numeric
+    // segments compare as 0) — good enough for a "requires game X+" warning badge.
+    private static int CompareVersions(string a, string b)
+    {
+        try
+        {
+            var pa = a.Split('.').Select(s => int.TryParse(s, out var n) ? n : 0).ToArray();
+            var pb = b.Split('.').Select(s => int.TryParse(s, out var n) ? n : 0).ToArray();
+            var len = Math.Max(pa.Length, pb.Length);
+            for (int i = 0; i < len; i++)
+            {
+                var na = i < pa.Length ? pa[i] : 0;
+                var nb = i < pb.Length ? pb[i] : 0;
+                if (na != nb)
+                    return na.CompareTo(nb);
+            }
+            return 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private void ClearList()
@@ -255,21 +414,6 @@ public class ModManagerSection : VBoxContainer
         }
     }
 
-    private void OnRowToggled(string id, bool enabled)
-    {
-        var cfg = ModConfig.Load();
-        cfg.Add(id, enabled);
-        cfg.Save();
-    }
-
-    private void OnRowMoved(string id, int delta)
-    {
-        var cfg = ModConfig.Load();
-        cfg.Move(id, delta);
-        cfg.Save();
-        Refresh();
-    }
-
     private void OnRowRemovePressed(ModEntryInfo info)
     {
         var id = info.Id;
@@ -279,10 +423,10 @@ public class ModManagerSection : VBoxContainer
             () =>
             {
                 if (ModImporter.DeleteMod(topLevelDir, id))
-                    SetStatus($"Removed {id}.", new Color(0.8f, 0.8f, 0.85f));
+                    SetStatus($"Removed {id}.", InfoColor);
                 else
-                    SetStatus($"Failed to remove {id}.", new Color(0.95f, 0.4f, 0.4f));
-                Refresh();
+                    SetStatus($"Failed to remove {id}.", ErrorColor);
+                RefreshLocal();
             },
             null
         );
@@ -293,7 +437,7 @@ public class ModManagerSection : VBoxContainer
         AppPaths.RequestStoragePermission();
         SetStatus(
             "After granting permission, return here and tap Refresh.",
-            new Color(0.95f, 0.75f, 0.3f)
+            WarnColor
         );
     }
 
@@ -304,7 +448,7 @@ public class ModManagerSection : VBoxContainer
         PatchHelper.Log("[Mods] Import button tapped");
         _importInFlight = true;
         _importButton.Disabled = true;
-        SetStatus("Opening file picker...", new Color(0.75f, 0.75f, 0.8f));
+        SetStatus("Opening file picker...", InfoColor);
 
         // Run the whole import pipeline on the thread pool to avoid Godot's
         // SynchronizationContext being disrupted by the SAF picker's OnPause/OnResume.
@@ -367,7 +511,7 @@ public class ModManagerSection : VBoxContainer
         }
 
         var zipPath = zipPaths[index];
-        SetStatus($"Importing {index + 1}/{zipPaths.Length}...", new Color(0.75f, 0.75f, 0.8f));
+        SetStatus($"Importing {index + 1}/{zipPaths.Length}...", InfoColor);
 
         try
         {
@@ -430,14 +574,14 @@ public class ModManagerSection : VBoxContainer
 
     private void FinishImport(string message, bool error, bool refresh)
     {
-        SetStatus(message, error ? new Color(0.95f, 0.4f, 0.4f) : new Color(0.75f, 0.75f, 0.8f));
+        SetStatus(message, error ? ErrorColor : InfoColor);
         _importInFlight = false;
         Callable
             .From(() =>
             {
                 _importButton.Disabled = false;
                 if (refresh)
-                    Refresh();
+                    RefreshLocal();
             })
             .CallDeferred();
     }

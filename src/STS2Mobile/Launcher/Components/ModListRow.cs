@@ -4,30 +4,30 @@ using STS2Mobile.Modding;
 
 namespace STS2Mobile.Launcher.Components;
 
-// One row in the mod manager list. Shows enable toggle, title, reorder buttons,
-// and an expandable detail panel with description/readme/remove.
+// One row in the Mod Hub's LOCAL tab (issue #58 phase 4b). Enable/order are no
+// longer surfaced here: activation now lives in the game's own Mods menu, and the
+// launcher no longer manages load order — so the ON/OFF toggle and ▲/▼ reorder
+// buttons that earlier revisions of this row had are gone. Shows the title, an
+// expandable detail panel (description/readme/path/min-version warning), and a
+// Remove button for launcher-managed mods (removable=true). Root-level "unmanaged"
+// manifests — loaded by the game but with no containing folder the launcher can
+// delete (ModScanner.WarnRootLevelManifests) — are rendered read-only instead via
+// removable=false.
 public class ModListRow : PanelContainer
 {
-    public event Action<bool> Toggled;
-    public event Action MoveUpPressed;
-    public event Action MoveDownPressed;
     public event Action RemovePressed;
 
     public string ModId { get; }
 
-    private readonly Button _toggleButton;
-    private readonly Button _moveUpButton;
-    private readonly Button _moveDownButton;
     private readonly Button _infoButton;
     private readonly VBoxContainer _detail;
 
     public ModListRow(
         ModEntryInfo info,
-        bool enabled,
-        bool canMoveUp,
-        bool canMoveDown,
         float scale,
-        bool workshopManaged = false
+        string versionWarning = null,
+        bool removable = true,
+        string badge = null
     )
     {
         ModId = info.Id;
@@ -46,35 +46,22 @@ public class ModListRow : PanelContainer
         topRow.AddThemeConstantOverride("separation", (int)(6 * scale));
         outer.AddChild(topRow);
 
-        _toggleButton = new StyledButton(enabled ? "ON" : "OFF", scale, fontSize: 12, height: 36);
-        _toggleButton.ToggleMode = true;
-        _toggleButton.ButtonPressed = enabled;
-        _toggleButton.CustomMinimumSize = new Vector2((int)(52 * scale), (int)(36 * scale));
-        ApplyToggleStyle(_toggleButton, enabled, scale);
-        _toggleButton.Toggled += pressed =>
-        {
-            _toggleButton.Text = pressed ? "ON" : "OFF";
-            ApplyToggleStyle(_toggleButton, pressed, scale);
-            Toggled?.Invoke(pressed);
-        };
-        topRow.AddChild(_toggleButton);
-
-        var titleLabel = new StyledLabel(BuildTitle(info), scale, fontSize: 14);
+        var titleLabel = new StyledLabel(
+            BuildTitle(info),
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Left
+        );
         titleLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         topRow.AddChild(titleLabel);
 
-        _moveUpButton = new StyledButton("▲", scale, fontSize: 12, height: 36);
-        _moveUpButton.CustomMinimumSize = new Vector2((int)(36 * scale), (int)(36 * scale));
-        _moveUpButton.Disabled = !canMoveUp;
-        _moveUpButton.Pressed += () => MoveUpPressed?.Invoke();
-        topRow.AddChild(_moveUpButton);
-
-        _moveDownButton = new StyledButton("▼", scale, fontSize: 12, height: 36);
-        _moveDownButton.CustomMinimumSize = new Vector2((int)(36 * scale), (int)(36 * scale));
-        _moveDownButton.Disabled = !canMoveDown;
-        _moveDownButton.Pressed += () => MoveDownPressed?.Invoke();
-        topRow.AddChild(_moveDownButton);
+        if (!string.IsNullOrEmpty(badge))
+        {
+            var badgeLabel = new StyledLabel(badge, scale, fontSize: 10);
+            badgeLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
+            topRow.AddChild(badgeLabel);
+        }
 
         _infoButton = new StyledButton("ⓘ", scale, fontSize: 14, height: 36);
         _infoButton.CustomMinimumSize = new Vector2((int)(36 * scale), (int)(36 * scale));
@@ -108,19 +95,15 @@ public class ModListRow : PanelContainer
         pathLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
         _detail.AddChild(pathLabel);
 
-        // Workshop-managed mods are removed by unsubscribing (issue #58 phase 3),
-        // not by a local delete that the next subscription sync would undo.
-        if (workshopManaged)
+        if (!string.IsNullOrEmpty(versionWarning))
         {
-            var managedLabel = new StyledLabel(
-                "Managed via Steam Workshop subscription.",
-                scale,
-                fontSize: 11
-            );
-            managedLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.65f, 0.85f));
-            _detail.AddChild(managedLabel);
+            var warnLabel = new StyledLabel(versionWarning, scale, fontSize: 11);
+            warnLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            warnLabel.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.3f));
+            _detail.AddChild(warnLabel);
         }
-        else
+
+        if (removable)
         {
             var removeButton = new StyledButton("Remove Mod", scale, fontSize: 12, height: 36);
             var r = (int)(4 * scale);
@@ -131,6 +114,17 @@ public class ModListRow : PanelContainer
             removeButton.AddThemeStyleboxOverride("pressed", dangerStyle);
             removeButton.Pressed += () => RemovePressed?.Invoke();
             _detail.AddChild(removeButton);
+        }
+        else
+        {
+            var note = new StyledLabel(
+                "Not managed by the launcher (no containing folder).",
+                scale,
+                fontSize: 11
+            );
+            note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            note.AddThemeColorOverride("font_color", new Color(0.55f, 0.65f, 0.85f));
+            _detail.AddChild(note);
         }
     }
 
@@ -144,18 +138,5 @@ public class ModListRow : PanelContainer
             ? ""
             : " — " + info.Manifest.Author;
         return name + version + author;
-    }
-
-    private static void ApplyToggleStyle(Button button, bool on, float scale)
-    {
-        var r = (int)(4 * scale);
-        var bw = Math.Max(1, (int)(2 * scale));
-        var style = on
-            ? StyledButton.MakeOutline(new Color(0.25f, 0.65f, 0.3f), r, bw)
-            : StyledButton.MakeOutline(new Color(0.7f, 0.25f, 0.25f), r, bw);
-        button.AddThemeStyleboxOverride("normal", style);
-        button.AddThemeStyleboxOverride("hover", style);
-        button.AddThemeStyleboxOverride("pressed", style);
-        button.AddThemeStyleboxOverride("disabled", style);
     }
 }
