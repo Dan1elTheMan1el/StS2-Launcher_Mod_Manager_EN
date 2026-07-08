@@ -168,13 +168,17 @@ public static class CloudSyncCoordinator
         }
     }
 
-    // Returns Task<CloudBatchOutcome> (not async): the body is fully
-    // synchronous, including the post-EndSaveBatch Flush wait added for P0-1.
-    // This is only ever called from inside a Task.Run (LauncherController),
-    // so blocking here is the point — it's what turns EndSaveBatch's
+    // Genuinely async (unlike before P0-2): the recovered-session gate below
+    // needs to await a user confirmation dialog without ever blocking a
+    // thread synchronously (see ProgressRecoveryGate). Still only ever called
+    // from inside a Task.Run (LauncherController), so the rest of the body
+    // stays exactly as blocking as it was — this is what turns EndSaveBatch's
     // fire-and-forget enqueue into an honest, awaitable result instead of the
     // previous "returns instantly, always says complete" lie.
-    public static Task<CloudBatchOutcome> ManualPushAllAsync(string accountName, string refreshToken)
+    public static async Task<CloudBatchOutcome> ManualPushAllAsync(
+        string accountName,
+        string refreshToken
+    )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
         var cloudStore =
@@ -191,7 +195,7 @@ public static class CloudSyncCoordinator
         // either. Without this, pressing Push as the very first cloud action
         // of a fresh launcher session could open a new batch while a batch
         // left dangling by a prior session's crash is still open server-side.
-        cloudStore.WaitForCacheReadyAsync(15_000).GetAwaiter().GetResult();
+        await cloudStore.WaitForCacheReadyAsync(15_000).ConfigureAwait(false);
 
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
@@ -212,6 +216,23 @@ public static class CloudSyncCoordinator
                         PatchHelper.Log($"[Cloud] Push: deleted cloud {path} (local cleared run)");
                         deletedCloud++;
                     }
+                    continue;
+                }
+
+                // P0-2 — a recovered-session progress.save push gets a
+                // one-time user confirmation before it's allowed to overwrite
+                // an existing cloud copy (see ProgressRecoveryGate). No-op
+                // (returns true immediately) unless this session's load
+                // actually underwent recovery.
+                if (
+                    IsProgressFile(path)
+                    && !await ProgressRecoveryGate.ShouldAllowPushAsync(cloudStore, path)
+                        .ConfigureAwait(false)
+                )
+                {
+                    PatchHelper.Log(
+                        $"[Cloud] Push: skipped {path} (recovered-session, user declined)"
+                    );
                     continue;
                 }
 
@@ -255,7 +276,7 @@ public static class CloudSyncCoordinator
             $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files "
                 + $"mirror-deleted, outcome={outcome}"
         );
-        return Task.FromResult(outcome);
+        return outcome;
     }
 
     // Unlike Push, Pull has no batch/write-queue involved — every download and
@@ -452,6 +473,16 @@ public static class CloudSyncCoordinator
     {
         var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
         return lower.EndsWith("/current_run.save") || lower.EndsWith("/current_run_mp.save");
+    }
+
+    // P0-2: identifies progress.save among the various per-profile paths
+    // ManualPushAllAsync walks, so only that file (not current_run/prefs/
+    // history) gets routed through ProgressRecoveryGate. Same test
+    // SaveProgressComparer.cs already uses to recognize progress.save.
+    private static bool IsProgressFile(string path)
+    {
+        var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
+        return lower.Contains("progress") && lower.EndsWith(".save");
     }
 
     // RunSaveManager keeps a .backup sibling per save and falls back to it when

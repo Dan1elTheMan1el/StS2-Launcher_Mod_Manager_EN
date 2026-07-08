@@ -824,7 +824,7 @@ public static class LauncherPatches
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int profile = 1; profile <= 3; profile++)
                 {
-                    await ApplyOneAsync(
+                    await ApplyProgressWithGateAsync(
                         local,
                         cloud,
                         keepLocal,
@@ -870,7 +870,7 @@ public static class LauncherPatches
         {
             UserDataPathProvider.IsRunningModded = modded;
 
-            await ApplyOneAsync(
+            await ApplyProgressWithGateAsync(
                 local,
                 cloud,
                 keepLocal,
@@ -906,6 +906,30 @@ public static class LauncherPatches
         {
             UserDataPathProvider.IsRunningModded = wasModded;
         }
+    }
+
+    // P0-2 — routes the progress.save leg of a KeepLocal apply through
+    // ProgressRecoveryGate first (no-op unless this session's progress load
+    // underwent recovery — see SaveDiagnosticPatches.ProgressLoadRecovered).
+    // A decline skips ONLY this one progress.save push; current_run/prefs/
+    // history (called separately, right after this, in both callers above)
+    // are untouched by the gate and always proceed normally. KeepCloud
+    // (!keepLocal) never gates — pulling from cloud never risks the cloud copy.
+    private static async Task ApplyProgressWithGateAsync(
+        ISaveStore local,
+        SteamKit2CloudSaveStore cloud,
+        bool keepLocal,
+        string progressPath
+    )
+    {
+        if (keepLocal && !await ProgressRecoveryGate.ShouldAllowPushAsync(cloud, progressPath))
+        {
+            PatchHelper.Log(
+                $"[Cloud] Apply: skipped progress push for {progressPath} (recovered-session, user declined)"
+            );
+            return;
+        }
+        await ApplyOneAsync(local, cloud, keepLocal, progressPath);
     }
 
     private static async Task ApplyOneAsync(
