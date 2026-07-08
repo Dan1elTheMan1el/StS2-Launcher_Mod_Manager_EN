@@ -59,7 +59,7 @@ public class WorkshopBrowserPane : VBoxContainer
         searchRow.AddThemeConstantOverride("separation", (int)(6 * scale));
         AddChild(searchRow);
 
-        _searchEdit = new StyledLineEdit("Search Workshop...", scale);
+        _searchEdit = new StyledLineEdit("Search Workshop or paste item URL/ID...", scale);
         _searchEdit.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _searchEdit.TextSubmitted += _ => OnSearchPressed();
         searchRow.AddChild(_searchEdit);
@@ -174,6 +174,18 @@ public class WorkshopBrowserPane : VBoxContainer
             return;
 
         var searchText = _searchEdit.Text?.Trim() ?? "";
+
+        // Direct add by URL/ID (issue #58 follow-up): unlisted items are excluded
+        // from QueryFiles results server-side, so a pasted workshop URL or bare id
+        // bypasses search and resolves via GetDetails instead — access is decided
+        // by Steam per account, so unlisted/friends-only items the user can reach
+        // work here.
+        if (TryParsePublishedFileId(searchText, out var directPfid))
+        {
+            await RunDirectLookupAsync(directPfid).ConfigureAwait(false);
+            return;
+        }
+
         var sort = (WorkshopQuerySort)_sortOption.GetSelectedId();
         var tags = _selectedTags.ToList();
 
@@ -218,6 +230,77 @@ public class WorkshopBrowserPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetStatus($"Workshop query failed: {ex.Message}", WarnColor);
+                _searchButton.Disabled = false;
+                _loadMoreButton.Disabled = false;
+            });
+        }
+    }
+
+    // Accepts a bare numeric published-file id or any URL carrying "id=<digits>"
+    // (e.g. https://steamcommunity.com/sharedfiles/filedetails/?id=3737335127).
+    // An all-digits mod title can't be text-searched as a side effect — acceptable;
+    // no real mod title is a bare 6+-digit number.
+    private static bool TryParsePublishedFileId(string text, out ulong pfid)
+    {
+        pfid = 0;
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        var m = System.Text.RegularExpressions.Regex.Match(text, @"[?&]id=(\d+)");
+        if (m.Success)
+            return ulong.TryParse(m.Groups[1].Value, out pfid) && pfid > 0;
+
+        return text.Length >= 6
+            && text.All(char.IsDigit)
+            && ulong.TryParse(text, out pfid)
+            && pfid > 0;
+    }
+
+    private async Task RunDirectLookupAsync(ulong pfid)
+    {
+        RunOnMain(() =>
+        {
+            ClearResults();
+            SetStatus("Looking up item...", InfoColor);
+            _searchButton.Disabled = true;
+        });
+
+        try
+        {
+            var items = await _connection
+                .GetPublishedFileDetailsAsync(new[] { pfid })
+                .ConfigureAwait(false);
+            // A nonexistent/inaccessible id still yields a details row, just an
+            // empty one — an absent Title is the "not found" signal.
+            var item = items.FirstOrDefault(i =>
+                i.PublishedFileId == pfid && !string.IsNullOrEmpty(i.Title)
+            );
+
+            RunOnMain(() =>
+            {
+                if (item == null)
+                {
+                    SetStatus(
+                        $"No Workshop item found for id {pfid} (or this account cannot access it).",
+                        WarnColor
+                    );
+                }
+                else
+                {
+                    AddResultCard(item);
+                    SetStatus("1 item (direct lookup)", InfoColor);
+                }
+                _loadMoreButton.Visible = false;
+                _searchButton.Disabled = false;
+                _loadMoreButton.Disabled = false;
+            });
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Workshop] Direct lookup failed for {pfid}: {ex}");
+            RunOnMain(() =>
+            {
+                SetStatus($"Item lookup failed: {ex.Message}", WarnColor);
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
             });
