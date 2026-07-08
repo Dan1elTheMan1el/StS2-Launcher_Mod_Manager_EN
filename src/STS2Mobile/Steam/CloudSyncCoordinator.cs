@@ -294,6 +294,26 @@ public static class CloudSyncCoordinator
         return paths;
     }
 
+    // Save Manager per-profile apply: history run files for ONE profile, under
+    // whatever mod state UserDataPathProvider.IsRunningModded is currently set
+    // to (caller owns the toggle — same convention as SavePathCompat callers
+    // elsewhere in this file). Unlike GetSaveFilePaths, this never walks all
+    // 3 profiles × 2 mod states — the whole point is to scope a resolve to a
+    // single slot so it can't touch the other 5.
+    public static List<string> GetHistoryFilePathsForProfile(ISaveStore store, int profileId)
+    {
+        var paths = new List<string>();
+        AddHistoryFiles(paths, store.GetFilesInDirectory, store.DirectoryExists, profileId);
+        return paths;
+    }
+
+    public static List<string> GetHistoryFilePathsForProfile(ICloudSaveStore store, int profileId)
+    {
+        var paths = new List<string>();
+        AddHistoryFiles(paths, store.GetFilesInDirectory, store.DirectoryExists, profileId);
+        return paths;
+    }
+
     // Collects save paths for both vanilla and modded profile directories.
     private static void CollectProfilePaths(
         List<string> paths,

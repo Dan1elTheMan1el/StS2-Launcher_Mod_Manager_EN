@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using MegaCrit.Sts2.Core.Saves;
 
@@ -47,6 +48,15 @@ public class SyncDecisionResult
     // pushes/pulls every diff. This counter lets the dialog flag the rest:
     // "프로필 3 (외 K개 차이)". 0 when there's no conflict at all.
     public int DiffSlotCount { get; init; }
+
+    // Set only by DeterminePerProfileAsync — identifies which single (profile ×
+    // modded) slot this result represents, so the Save Manager profile list can
+    // label/scope-apply per slot without digging into LocalSummary/CloudSummary
+    // (which may themselves be empty placeholders on a MobileOnly/CloudOnly slot).
+    // Left at the default (0/false) for the aggregate DetermineAsync result, which
+    // doesn't represent a single slot.
+    public int ProfileNumber { get; init; }
+    public bool IsModded { get; init; }
 
     // Drives which side gets visual emphasis ("most recent" highlight). When one
     // side is empty, the side with data is the de-facto "most recent" — there's
@@ -124,78 +134,14 @@ public static class CloudSyncDecisions
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int profile = 1; profile <= MaxProfiles; profile++)
                 {
-                    var path = SavePathCompat.GetProgressPathForProfile(profile);
+                    var slot = await EvaluateSlotAsync(local, cloud, profile, modded)
+                        .ConfigureAwait(false);
 
-                    int localSize = local.FileExists(path) ? GetSize(local, path) : 0;
-                    int cloudSize = cloud.FileExists(path) ? cloud.GetFileSize(path) : 0;
-
-                    // Issue #7: also check current_run.save. progress.save alone
-                    // misses the most common cross-device case — an in-progress
-                    // run on one device with empty/identical progress on the
-                    // other. Without this, decision falls to NoData/Identical
-                    // and the user is never prompted to sync the in-progress run.
-                    var runPath = SavePathCompat.GetRunSavePath(profile, "current_run.save");
-                    int localRunSize = local.FileExists(runPath) ? GetSize(local, runPath) : 0;
-                    int cloudRunSize = cloud.FileExists(runPath) ? cloud.GetFileSize(runPath) : 0;
-
-                    bool hasLocal = localSize > 0 || localRunSize > 0;
-                    bool hasCloud = cloudSize > 0 || cloudRunSize > 0;
-
-                    if (hasLocal)
+                    if (slot.HasLocal)
                         anyLocal = true;
-                    if (hasCloud)
+                    if (slot.HasCloud)
                         anyCloud = true;
-
-                    bool profileDiffers = false;
-
-                    // Compare progress.save first (cheap size check, byte
-                    // comparison only when sizes match).
-                    if (localSize > 0 && cloudSize > 0)
-                    {
-                        if (localSize != cloudSize)
-                        {
-                            profileDiffers = true;
-                        }
-                        else
-                        {
-                            try
-                            {
-                                var localContent = local.ReadFile(path);
-                                var cloudContent = await cloud
-                                    .ReadFileAsync(path)
-                                    .ConfigureAwait(false);
-                                if (localContent != cloudContent)
-                                    profileDiffers = true;
-                            }
-                            catch (Exception ex)
-                            {
-                                PatchHelper.Log(
-                                    $"[Cloud] Decision: read failed for {path}, treating as diff: {ex.Message}"
-                                );
-                                profileDiffers = true;
-                            }
-                        }
-                    }
-                    else if (localSize > 0 || cloudSize > 0)
-                    {
-                        // One side has progress.save, other doesn't.
-                        profileDiffers = true;
-                    }
-
-                    // Same comparison for current_run.save. Size-only check
-                    // is sufficient for triggering Conflict — actual sync
-                    // direction is decided later by SaveProgressComparer.
-                    if (localRunSize > 0 && cloudRunSize > 0)
-                    {
-                        if (localRunSize != cloudRunSize)
-                            profileDiffers = true;
-                    }
-                    else if (localRunSize > 0 || cloudRunSize > 0)
-                    {
-                        profileDiffers = true;
-                    }
-
-                    if (profileDiffers)
+                    if (slot.Differs)
                         anyDiff = true;
 
                     // Aggregate summaries: build a per-profile summary so we
@@ -204,67 +150,33 @@ public static class CloudSyncDecisions
                     //      Conflict actually means)
                     //   2. profile with an in-progress run
                     //   3. first non-empty progress.save (legacy fallback)
-                    SaveProgressSummary localSummary = null;
-                    SaveProgressSummary cloudSummary = null;
-
-                    if (localSize > 0 || localRunSize > 0)
-                    {
-                        localSummary = BuildSummary(
-                            () => localSize > 0 ? local.ReadFile(path) : null,
-                            localSize,
-                            localSize > 0
-                                ? local.GetLastModifiedTime(path)
-                                : DateTimeOffset.MinValue,
-                            () => localRunSize > 0 ? local.ReadFile(runPath) : null,
-                            localRunSize,
-                            localRunSize > 0
-                                ? local.GetLastModifiedTime(runPath)
-                                : DateTimeOffset.MinValue,
-                            "local"
-                        );
-                        localSummary.ProfileNumber = profile;
-                        localSummary.IsModded = modded;
-                    }
-                    if (cloudSize > 0 || cloudRunSize > 0)
-                    {
-                        cloudSummary = await BuildCloudSummaryAsync(
-                            cloud,
-                            path,
-                            cloudSize,
-                            runPath,
-                            cloudRunSize
-                        );
-                        cloudSummary.ProfileNumber = profile;
-                        cloudSummary.IsModded = modded;
-                    }
-
-                    if (profileDiffers)
+                    if (slot.Differs)
                     {
                         diffSlots++;
                         firstDiffLocal ??=
-                            localSummary
+                            slot.LocalSummary
                             ?? new SaveProgressSummary
                             {
                                 ProfileNumber = profile,
                                 IsModded = modded,
                             };
                         firstDiffCloud ??=
-                            cloudSummary
+                            slot.CloudSummary
                             ?? new SaveProgressSummary
                             {
                                 ProfileNumber = profile,
                                 IsModded = modded,
                             };
                     }
-                    if (localSummary?.HasCurrentRun == true)
-                        firstRunLocal ??= localSummary;
-                    if (cloudSummary?.HasCurrentRun == true)
-                        firstRunCloud ??= cloudSummary;
+                    if (slot.LocalSummary?.HasCurrentRun == true)
+                        firstRunLocal ??= slot.LocalSummary;
+                    if (slot.CloudSummary?.HasCurrentRun == true)
+                        firstRunCloud ??= slot.CloudSummary;
 
-                    if (aggregateLocal == null && localSummary != null)
-                        aggregateLocal = localSummary;
-                    if (aggregateCloud == null && cloudSummary != null)
-                        aggregateCloud = cloudSummary;
+                    if (aggregateLocal == null && slot.LocalSummary != null)
+                        aggregateLocal = slot.LocalSummary;
+                    if (aggregateCloud == null && slot.CloudSummary != null)
+                        aggregateCloud = slot.CloudSummary;
                 }
             }
         }
@@ -322,6 +234,193 @@ public static class CloudSyncDecisions
             Decision = SyncDecision.Identical,
             LocalSummary = aggregateLocal,
             CloudSummary = aggregateCloud,
+        };
+    }
+
+    // Save Manager profile list: unlike DetermineAsync (which collapses every
+    // profile × modded slot into ONE aggregate summary picked by priority),
+    // this returns one SyncDecisionResult PER non-empty slot so the user can
+    // inspect and resolve each profile independently. This is what fixes the
+    // "ghost slot hijacking" bug — a 1.5KB unmodded profile2 stub no longer
+    // hides a 228KB modded profile1 conflict; both show up as separate rows.
+    // Ordered profile-major (profile1 unmodded/modded, then profile2, ...) to
+    // match how the user thinks about "프로필 N" — DetermineAsync keeps its own
+    // modded-major loop order since that's unobserved (aggregate only).
+    public static async Task<List<SyncDecisionResult>> DeterminePerProfileAsync(
+        ISaveStore local,
+        ICloudSaveStore cloud
+    )
+    {
+        await Issue7Diagnostics.AuditDecisionStateAsync(local, cloud, "DeterminePerProfileAsync");
+
+        var results = new List<SyncDecisionResult>();
+        var wasModded = UserDataPathProvider.IsRunningModded;
+        try
+        {
+            for (int profile = 1; profile <= MaxProfiles; profile++)
+            {
+                foreach (bool modded in new[] { false, true })
+                {
+                    UserDataPathProvider.IsRunningModded = modded;
+                    var slot = await EvaluateSlotAsync(local, cloud, profile, modded)
+                        .ConfigureAwait(false);
+
+                    if (!slot.HasLocal && !slot.HasCloud)
+                        continue; // Truly empty slot — nothing to show a button for.
+
+                    var localSummary =
+                        slot.LocalSummary
+                        ?? new SaveProgressSummary { ProfileNumber = profile, IsModded = modded };
+                    var cloudSummary =
+                        slot.CloudSummary
+                        ?? new SaveProgressSummary { ProfileNumber = profile, IsModded = modded };
+
+                    SyncDecision decision;
+                    if (slot.HasLocal && !slot.HasCloud)
+                        decision = SyncDecision.MobileOnly;
+                    else if (!slot.HasLocal && slot.HasCloud)
+                        decision = SyncDecision.CloudOnly;
+                    else
+                        decision = slot.Differs ? SyncDecision.Conflict : SyncDecision.Identical;
+
+                    results.Add(
+                        new SyncDecisionResult
+                        {
+                            Decision = decision,
+                            LocalSummary = localSummary,
+                            CloudSummary = cloudSummary,
+                            ProfileNumber = profile,
+                            IsModded = modded,
+                        }
+                    );
+                }
+            }
+        }
+        finally
+        {
+            UserDataPathProvider.IsRunningModded = wasModded;
+        }
+        return results;
+    }
+
+    // Holds the raw per-slot comparison a single (profile × modded) pair
+    // produces. Shared by DetermineAsync (aggregates every slot into one
+    // summary) and DeterminePerProfileAsync (keeps each slot separate).
+    private sealed class SlotEvaluation
+    {
+        public bool HasLocal;
+        public bool HasCloud;
+        public bool Differs;
+        public SaveProgressSummary LocalSummary;
+        public SaveProgressSummary CloudSummary;
+    }
+
+    // Evaluates one (profile × modded) slot: existence, content diff, and
+    // built summaries for both sides. Assumes the caller has already set
+    // UserDataPathProvider.IsRunningModded = modded — SavePathCompat resolves
+    // paths from that ambient state, same convention as the rest of this file.
+    private static async Task<SlotEvaluation> EvaluateSlotAsync(
+        ISaveStore local,
+        ICloudSaveStore cloud,
+        int profile,
+        bool modded
+    )
+    {
+        var path = SavePathCompat.GetProgressPathForProfile(profile);
+
+        int localSize = local.FileExists(path) ? GetSize(local, path) : 0;
+        int cloudSize = cloud.FileExists(path) ? cloud.GetFileSize(path) : 0;
+
+        // Issue #7: also check current_run.save. progress.save alone misses
+        // the most common cross-device case — an in-progress run on one
+        // device with empty/identical progress on the other. Without this,
+        // decision falls to NoData/Identical and the user is never prompted
+        // to sync the in-progress run.
+        var runPath = SavePathCompat.GetRunSavePath(profile, "current_run.save");
+        int localRunSize = local.FileExists(runPath) ? GetSize(local, runPath) : 0;
+        int cloudRunSize = cloud.FileExists(runPath) ? cloud.GetFileSize(runPath) : 0;
+
+        bool hasLocal = localSize > 0 || localRunSize > 0;
+        bool hasCloud = cloudSize > 0 || cloudRunSize > 0;
+
+        bool profileDiffers = false;
+
+        // Compare progress.save first (cheap size check, byte comparison only
+        // when sizes match).
+        if (localSize > 0 && cloudSize > 0)
+        {
+            if (localSize != cloudSize)
+            {
+                profileDiffers = true;
+            }
+            else
+            {
+                try
+                {
+                    var localContent = local.ReadFile(path);
+                    var cloudContent = await cloud.ReadFileAsync(path).ConfigureAwait(false);
+                    if (localContent != cloudContent)
+                        profileDiffers = true;
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log(
+                        $"[Cloud] Decision: read failed for {path}, treating as diff: {ex.Message}"
+                    );
+                    profileDiffers = true;
+                }
+            }
+        }
+        else if (localSize > 0 || cloudSize > 0)
+        {
+            // One side has progress.save, other doesn't.
+            profileDiffers = true;
+        }
+
+        // Same comparison for current_run.save. Size-only check is sufficient
+        // for triggering Conflict — actual sync direction is decided later by
+        // SaveProgressComparer.
+        if (localRunSize > 0 && cloudRunSize > 0)
+        {
+            if (localRunSize != cloudRunSize)
+                profileDiffers = true;
+        }
+        else if (localRunSize > 0 || cloudRunSize > 0)
+        {
+            profileDiffers = true;
+        }
+
+        SaveProgressSummary localSummary = null;
+        SaveProgressSummary cloudSummary = null;
+
+        if (localSize > 0 || localRunSize > 0)
+        {
+            localSummary = BuildSummary(
+                () => localSize > 0 ? local.ReadFile(path) : null,
+                localSize,
+                localSize > 0 ? local.GetLastModifiedTime(path) : DateTimeOffset.MinValue,
+                () => localRunSize > 0 ? local.ReadFile(runPath) : null,
+                localRunSize,
+                localRunSize > 0 ? local.GetLastModifiedTime(runPath) : DateTimeOffset.MinValue,
+                "local"
+            );
+            localSummary.ProfileNumber = profile;
+            localSummary.IsModded = modded;
+        }
+        if (cloudSize > 0 || cloudRunSize > 0)
+        {
+            cloudSummary = await BuildCloudSummaryAsync(cloud, path, cloudSize, runPath, cloudRunSize);
+            cloudSummary.ProfileNumber = profile;
+            cloudSummary.IsModded = modded;
+        }
+
+        return new SlotEvaluation
+        {
+            HasLocal = hasLocal,
+            HasCloud = hasCloud,
+            Differs = profileDiffers,
+            LocalSummary = localSummary,
+            CloudSummary = cloudSummary,
         };
     }
 

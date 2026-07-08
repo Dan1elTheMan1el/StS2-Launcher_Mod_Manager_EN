@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 using Godot;
@@ -275,11 +276,14 @@ public static class LauncherPatches
         }
     }
 
-    // Public entry point used by the Save Manager launcher button. Always shows
-    // the dialog (even on Identical) so the user can inspect both sides and
-    // explicitly trigger a re-sync if they want. Decision is forced to Conflict
-    // for the dialog rendering — the underlying CloudSyncDecisions still runs
-    // so summaries are accurate.
+    // Public entry point used by the Save Manager launcher button. Lists every
+    // (profile × modded) slot that has local or cloud data — one button per
+    // slot — instead of the old single aggregate dialog. That aggregate picked
+    // ONE summary by priority (first-diff, then first-in-progress-run, then
+    // first-non-empty), so a tiny ghost slot (e.g. an empty unmodded profile2
+    // stub) could hijack the dialog and hide a real conflict on another slot
+    // entirely. Per-slot listing means every slot is reachable and resolvable
+    // on its own — see CloudSyncDecisions.DeterminePerProfileAsync.
     public static async Task OpenSaveSyncDialogAsync(Node parent)
     {
         if (!CloudSyncEnabled)
@@ -305,25 +309,52 @@ public static class LauncherPatches
         }
 
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
-        var rawDecision = await CloudSyncDecisions.DetermineAsync(localStore, cloudStore);
 
-        // Pass the real decision through — the dialog adapts (Identical /
-        // NoData show informational close-only UI; non-Identical show the
-        // local/cloud choice). No need to force Conflict semantics anymore.
-        var displayDecision = new SyncDecisionResult
+        // Loop so resolving one slot returns the user to a refreshed profile
+        // list — they can then inspect/resolve another slot in the same visit
+        // instead of having to re-tap the Save Manager button each time.
+        while (true)
         {
-            Decision = rawDecision.Decision,
-            LocalSummary = rawDecision.LocalSummary ?? new SaveProgressSummary(),
-            CloudSummary = rawDecision.CloudSummary ?? new SaveProgressSummary(),
-        };
-        PatchHelper.Log($"[Cloud] Save Manager: opening dialog (decision={rawDecision.Decision})");
-        Issue7Diagnostics.LogDialogSummary(
-            "SaveManagerButton",
-            displayDecision.Decision,
-            displayDecision.LocalSummary,
-            displayDecision.CloudSummary
-        );
-        await HandleConflictAsync(parent, localStore, cloudStore, displayDecision);
+            var slots = await CloudSyncDecisions.DeterminePerProfileAsync(localStore, cloudStore);
+            PatchHelper.Log($"[Cloud] Save Manager: {slots.Count} profile slot(s) with data");
+
+            if (slots.Count == 0)
+            {
+                // Nothing anywhere — same informational close-only dialog as
+                // before. HandleConflictAsync's Cancel branch already special-
+                // cases NoData/Identical to skip the local-only fallback, so
+                // reusing it here is safe (no ApplyChosenSideAsync call).
+                var empty = new SyncDecisionResult
+                {
+                    Decision = SyncDecision.NoData,
+                    LocalSummary = new SaveProgressSummary(),
+                    CloudSummary = new SaveProgressSummary(),
+                };
+                await HandleConflictAsync(parent, localStore, cloudStore, empty);
+                return;
+            }
+
+            var picker = new ProfilePickerDialog(
+                slots,
+                LauncherUI.ResolveScale(parent),
+                LauncherUI.ResolveViewportHeight(parent)
+            );
+            parent.AddChild(picker);
+            var picked = await picker.Result;
+            if (picked == null)
+                return; // Closed without picking a slot.
+
+            PatchHelper.Log(
+                $"[Cloud] Save Manager: slot picked profile={picked.ProfileNumber} modded={picked.IsModded} decision={picked.Decision}"
+            );
+            Issue7Diagnostics.LogDialogSummary(
+                "SaveManagerProfileSlot",
+                picked.Decision,
+                picked.LocalSummary,
+                picked.CloudSummary
+            );
+            await HandleProfileConflictAsync(parent, localStore, cloudStore, picked);
+        }
     }
 
     private static async Task ResolveSyncDecisionAsync(
@@ -475,6 +506,120 @@ public static class LauncherPatches
         }
     }
 
+    // Save Manager per-profile resolution: same dialog/backup/apply/verify
+    // shape as HandleConflictAsync, but the apply is scoped to ONE (profile ×
+    // modded) slot via ApplyChosenSideForSlotAsync — the other slots are
+    // never touched. The full-tree LocalBackupService snapshot is kept as-is
+    // (issue #36 Part A backups are whole-tree by design; scoping the
+    // *apply* is what protects the other profiles, not the backup).
+    private static async Task HandleProfileConflictAsync(
+        Node gameNode,
+        ISaveStore localStore,
+        SteamKit2CloudSaveStore cloudStore,
+        SyncDecisionResult slot
+    )
+    {
+        var dialog = new CloudConflictDialog(
+            slot.LocalSummary,
+            slot.CloudSummary,
+            slot.LocalIsMoreRecent,
+            LauncherUI.ResolveScale(gameNode),
+            slot.Decision,
+            LauncherUI.ResolveViewportHeight(gameNode)
+        );
+        gameNode.AddChild(dialog);
+        var choice = await dialog.Result;
+        PatchHelper.Log(
+            $"[Cloud] Profile slot conflict resolved: profile={slot.ProfileNumber} modded={slot.IsModded} choice={choice}"
+        );
+
+        LocalBackupService.ConflictBackupHandle conflictBackup = null;
+        if (choice == CloudConflictChoice.KeepLocal || choice == CloudConflictChoice.KeepCloud)
+        {
+            conflictBackup = await LocalBackupService.BackupConflictDiscardedAsync(
+                localStore,
+                cloudStore,
+                keepLocal: choice == CloudConflictChoice.KeepLocal,
+                progress: null
+            );
+        }
+
+        switch (choice)
+        {
+            case CloudConflictChoice.KeepLocal:
+                await ApplyChosenSideForSlotAsync(
+                    localStore,
+                    cloudStore,
+                    keepLocal: true,
+                    slot.ProfileNumber,
+                    slot.IsModded
+                );
+                LocalBackupService.BackupConflictKept(conflictBackup, localStore);
+                if (
+                    !await FlushAndVerifyForSlotAsync(
+                        localStore,
+                        cloudStore,
+                        keepLocal: true,
+                        slot.ProfileNumber,
+                        slot.IsModded
+                    )
+                )
+                {
+                    PatchHelper.Log(
+                        "[Cloud] Verification failed after profile KeepLocal — falling back to local-only this session"
+                    );
+                    _cloudCacheReady = false;
+                }
+                break;
+            case CloudConflictChoice.KeepCloud:
+                await ApplyChosenSideForSlotAsync(
+                    localStore,
+                    cloudStore,
+                    keepLocal: false,
+                    slot.ProfileNumber,
+                    slot.IsModded
+                );
+                LocalBackupService.BackupConflictKept(conflictBackup, localStore);
+                if (
+                    !await FlushAndVerifyForSlotAsync(
+                        localStore,
+                        cloudStore,
+                        keepLocal: false,
+                        slot.ProfileNumber,
+                        slot.IsModded
+                    )
+                )
+                {
+                    PatchHelper.Log(
+                        "[Cloud] Verification failed after profile KeepCloud — falling back to local-only this session"
+                    );
+                    _cloudCacheReady = false;
+                }
+                break;
+            case CloudConflictChoice.Cancel:
+                // Same button-only semantics as HandleConflictAsync's Cancel
+                // branch: an already-in-sync slot (Identical — NoData can't
+                // reach here, empty slots aren't listed) closing is a no-op,
+                // but backing out of a real per-slot conflict/one-sided slot
+                // still falls back to local-only for the session so the game
+                // doesn't proceed with an unresolved decision live.
+                if (slot.Decision == SyncDecision.Identical)
+                {
+                    PatchHelper.Log(
+                        "[Cloud] Profile slot dialog closed (already in sync — no action)"
+                    );
+                }
+                else
+                {
+                    _cloudCacheReady = false;
+                    PatchHelper.Log(
+                        "[Cloud] Profile slot conflict cancelled — falling back to local-only"
+                    );
+                }
+                break;
+        }
+    }
+
     // Blocks until queued cloud writes drain, then verifies the chosen side has
     // landed on both ends. Without this, the user could press a button and the
     // launcher would fall through to InitSettingsData while a push is still in
@@ -510,6 +655,55 @@ public static class LauncherPatches
         // the wait time and progress.save is the one file that actually carries
         // career state worth losing sleep over.
         var path = SavePathCompat.GetProgressPathForProfile(1);
+        return await VerifyPathMatchesAsync(localStore, cloudStore, path);
+    }
+
+    // Save Manager per-profile apply: same drain-then-verify contract as
+    // FlushAndVerifyAsync, but checks the picked slot's own progress.save
+    // instead of always profile1 — a KeepLocal/KeepCloud on profile2 shouldn't
+    // report success/failure based on profile1's unrelated state.
+    private static async Task<bool> FlushAndVerifyForSlotAsync(
+        ISaveStore localStore,
+        SteamKit2CloudSaveStore cloudStore,
+        bool keepLocal,
+        int profile,
+        bool modded
+    )
+    {
+        try
+        {
+            cloudStore.Flush(timeoutMs: 300_000);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Cloud] Flush failed: {ex.Message}");
+            return false;
+        }
+
+        var wasModded = UserDataPathProvider.IsRunningModded;
+        string path;
+        try
+        {
+            UserDataPathProvider.IsRunningModded = modded;
+            path = SavePathCompat.GetProgressPathForProfile(profile);
+        }
+        finally
+        {
+            UserDataPathProvider.IsRunningModded = wasModded;
+        }
+
+        return await VerifyPathMatchesAsync(localStore, cloudStore, path);
+    }
+
+    // Shared byte-for-byte verify used by both FlushAndVerifyAsync (fixed
+    // profile1) and FlushAndVerifyForSlotAsync (the picked slot's path).
+    // Assumes cloudStore.Flush already ran — this only re-reads and compares.
+    private static async Task<bool> VerifyPathMatchesAsync(
+        ISaveStore localStore,
+        SteamKit2CloudSaveStore cloudStore,
+        string path
+    )
+    {
         try
         {
             bool localExists = localStore.FileExists(path);
@@ -609,6 +803,63 @@ public static class LauncherPatches
                     );
                 }
             }
+        }
+        finally
+        {
+            UserDataPathProvider.IsRunningModded = wasModded;
+        }
+    }
+
+    // Save Manager per-profile apply: scoped to ONE (profile × modded) slot,
+    // unlike ApplyChosenSideAsync above which walks all 3 profiles × 2 mod
+    // states. Covers progress.save, current_run(.save/_mp.save), prefs, and
+    // history/*.run for that slot only — the data-safety guarantee is that
+    // the other 5 slots are never even resolved to a path here, so a
+    // KeepLocal/KeepCloud pick for profile2 physically cannot touch profile1.
+    private static async Task ApplyChosenSideForSlotAsync(
+        ISaveStore local,
+        SteamKit2CloudSaveStore cloud,
+        bool keepLocal,
+        int profile,
+        bool modded
+    )
+    {
+        var wasModded = UserDataPathProvider.IsRunningModded;
+        try
+        {
+            UserDataPathProvider.IsRunningModded = modded;
+
+            await ApplyOneAsync(
+                local,
+                cloud,
+                keepLocal,
+                SavePathCompat.GetProgressPathForProfile(profile)
+            );
+            await ApplyOneAsync(
+                local,
+                cloud,
+                keepLocal,
+                SavePathCompat.GetRunSavePath(profile, "current_run.save")
+            );
+            await ApplyOneAsync(
+                local,
+                cloud,
+                keepLocal,
+                SavePathCompat.GetRunSavePath(profile, "current_run_mp.save")
+            );
+            await ApplyOneAsync(local, cloud, keepLocal, SavePathCompat.GetPrefsPath(profile));
+
+            // History run files: union of whatever exists on either side so a
+            // file that only lives on the "keep" side isn't silently skipped
+            // (each side's own file listing only sees what it itself has).
+            var historyPaths = new HashSet<string>(
+                CloudSyncCoordinator.GetHistoryFilePathsForProfile(local, profile)
+            );
+            historyPaths.UnionWith(
+                CloudSyncCoordinator.GetHistoryFilePathsForProfile(cloud, profile)
+            );
+            foreach (var histPath in historyPaths)
+                await ApplyOneAsync(local, cloud, keepLocal, histPath);
         }
         finally
         {
