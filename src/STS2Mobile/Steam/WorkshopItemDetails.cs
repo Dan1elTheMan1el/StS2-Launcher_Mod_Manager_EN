@@ -25,6 +25,11 @@ public class WorkshopItemDetails
     public long TimeUpdated;
     public string PreviewUrl;
     public List<string> Tags = new();
+
+    // Dependency items (publishedfileid only) reported by GetDetails/QueryFiles
+    // when includechildren/return_children is requested. Empty for items with no
+    // Workshop dependencies.
+    public List<ulong> Children = new();
     public float VoteScore;
     public uint Subscriptions;
 

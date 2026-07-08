@@ -28,6 +28,12 @@ public static class AppPaths
     public const string ExternalConfigDir = ExternalRoot + "/Config";
     public const string ExternalModConfigFile = ExternalModsDir + "/mod_config.json";
 
+    // Issue #58: Workshop preview-image cache. App-internal storage (not
+    // ExternalRoot) since these are disposable, re-downloadable thumbnails with
+    // no reason to survive an uninstall or be visible outside the app, matching
+    // the existing OS.GetCacheDir() usage in ModImporter for import scratch space.
+    public static string ThumbCacheDir => Path.Combine(OS.GetCacheDir(), "workshop_thumbs");
+
     // Issue #36 Part A: builds the on-disk backup path that mirrors a save's
     // original folder structure and filename under a backup-set directory. The
     // filename is never altered, so a restore is a plain copy of the original file

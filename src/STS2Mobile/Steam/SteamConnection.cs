@@ -17,6 +17,20 @@ public enum ConnectionState
     Backoff,
 }
 
+// Sort order for QueryWorkshopAsync, mapped 1:1 onto CPublishedFile_QueryFiles_
+// Request.query_type (Steamworks EPublishedFileQueryType numeric values — not
+// modeled as an enum in SteamKit2 itself, which only exposes the raw protobuf
+// uint). When a search term is supplied the caller's sort is overridden with
+// query_type 9 (text search) regardless of which of these values is passed.
+public enum WorkshopQuerySort : uint
+{
+    Popular = 0, // k_PublishedFileQueryType_RankedByVote
+    Newest = 1, // k_PublishedFileQueryType_RankedByPublicationDate
+    Trending = 3, // k_PublishedFileQueryType_RankedByTrend
+    LastUpdated = 12, // k_PublishedFileQueryType_RankedByLastUpdatedDate
+    TopRated = 21, // k_PublishedFileQueryType_RankedByTotalUniqueSubscriptions
+}
+
 // General-purpose on-demand Steam connection. Connects when a handler is accessed,
 // auto-disconnects after idle timeout, reconnects with exponential backoff on failure.
 // Reuses the same SteamClient instance across reconnects for handler/service persistence.
@@ -191,7 +205,7 @@ public class SteamConnection : IDisposable
             appid = WorkshopAppId,
             includetags = true,
             includevotes = true,
-            includechildren = false,
+            includechildren = true,
             short_description = false,
         };
         req.publishedfileids.AddRange(ids);
@@ -209,6 +223,57 @@ public class SteamConnection : IDisposable
                 result.Add(MapDetails(d));
         }
         return result;
+    }
+
+    // Browses/searches the Workshop for the in-app browser tab. page is 1-based,
+    // matching CPublishedFile_QueryFiles_Request's own convention. When
+    // searchText is non-empty, query_type is forced to 9 (text search) regardless
+    // of the requested sort, since Steam's query_type values for sort and for
+    // text search are mutually exclusive query modes.
+    public async Task<(List<WorkshopItemDetails> Items, uint Total)> QueryWorkshopAsync(
+        WorkshopQuerySort sort,
+        string searchText,
+        IReadOnlyList<string> requiredTags,
+        uint page,
+        uint perPage
+    )
+    {
+        const uint TextSearchQueryType = 9;
+
+        var req = new CPublishedFile_QueryFiles_Request
+        {
+            query_type = string.IsNullOrEmpty(searchText) ? (uint)sort : TextSearchQueryType,
+            page = page,
+            numperpage = perPage,
+            appid = WorkshopAppId,
+            return_vote_data = true,
+            return_tags = true,
+            return_children = true,
+            return_short_description = true,
+        };
+        if (!string.IsNullOrEmpty(searchText))
+            req.search_text = searchText;
+        if (requiredTags != null && requiredTags.Count > 0)
+            req.requiredtags.AddRange(requiredTags);
+
+        var resp = await SendService<
+            CPublishedFile_QueryFiles_Request,
+            CPublishedFile_QueryFiles_Response
+        >("PublishedFile.QueryFiles", req)
+            .ConfigureAwait(false);
+
+        var items = new List<WorkshopItemDetails>();
+        if (resp.publishedfiledetails != null)
+        {
+            foreach (var d in resp.publishedfiledetails)
+                items.Add(MapDetails(d));
+        }
+
+        PatchHelper.Log(
+            $"[Workshop] QueryFiles sort={sort} page={page} search='{searchText}' -> "
+                + $"{items.Count}/{resp.total}"
+        );
+        return (items, resp.total);
     }
 
     // Enumerates the current user's Workshop subscriptions for the game, paging
@@ -325,6 +390,11 @@ public class SteamConnection : IDisposable
         {
             foreach (var t in d.tags)
                 item.Tags.Add(t.tag);
+        }
+        if (d.children != null)
+        {
+            foreach (var c in d.children)
+                item.Children.Add(c.publishedfileid);
         }
         return item;
     }
