@@ -4,6 +4,16 @@ namespace STS2Mobile.Launcher.Components;
 
 public class StyledButton : Button
 {
+    // Baseline size the main launcher screen's own action buttons render at
+    // (ActionSection's Local Backup/Auto Sync/Push/Pull — see also the
+    // similarly-sized SAVE MANAGER button in LauncherView). Modal dialogs
+    // (CloudConflictDialog, ProfilePickerDialog) reuse these as a floor for
+    // their own compact-viewport shrink, so a short screen can never render a
+    // dialog button/text smaller than what's already on the main screen
+    // (user report: "save manager 글자가 너무 작아").
+    public const int MainActionFontSize = 14;
+    public const int MainActionHeight = 44;
+
     public StyledButton(string text, float scale, int fontSize = 14, int height = 42)
     {
         Text = text;

@@ -40,12 +40,22 @@ public class ActionSection : VBoxContainer
         _offStyle = StyledButton.MakeOutline(new Color(0.7f, 0.25f, 0.25f), r, bw);
         _onStyle = StyledButton.MakeOutline(new Color(0.25f, 0.65f, 0.3f), r, bw);
 
-        _localBackupButton = new StyledButton("Local Backup", scale, fontSize: 14, height: 44);
+        _localBackupButton = new StyledButton(
+            "Local Backup",
+            scale,
+            fontSize: StyledButton.MainActionFontSize,
+            height: StyledButton.MainActionHeight
+        );
         _localBackupButton.Visible = false;
         _localBackupButton.Pressed += () => LocalBackupPressed?.Invoke();
         AddChild(_localBackupButton);
 
-        _cloudSyncToggle = new StyledButton("Auto Sync: OFF", scale, fontSize: 14, height: 44);
+        _cloudSyncToggle = new StyledButton(
+            "Auto Sync: OFF",
+            scale,
+            fontSize: StyledButton.MainActionFontSize,
+            height: StyledButton.MainActionHeight
+        );
         _cloudSyncToggle.ToggleMode = true;
         _cloudSyncToggle.Visible = false;
         ApplyToggleStyle(_cloudSyncToggle, false);
@@ -61,12 +71,22 @@ public class ActionSection : VBoxContainer
         pushPullRow.Visible = false;
         pushPullRow.AddThemeConstantOverride("separation", (int)(6 * scale));
 
-        _pushButton = new StyledButton("Push to Cloud", scale, fontSize: 14, height: 44);
+        _pushButton = new StyledButton(
+            "Push to Cloud",
+            scale,
+            fontSize: StyledButton.MainActionFontSize,
+            height: StyledButton.MainActionHeight
+        );
         _pushButton.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _pushButton.Pressed += () => CloudPushPressed?.Invoke();
         pushPullRow.AddChild(_pushButton);
 
-        _pullButton = new StyledButton("Pull from Cloud", scale, fontSize: 14, height: 44);
+        _pullButton = new StyledButton(
+            "Pull from Cloud",
+            scale,
+            fontSize: StyledButton.MainActionFontSize,
+            height: StyledButton.MainActionHeight
+        );
         _pullButton.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _pullButton.Pressed += () => CloudPullPressed?.Invoke();
         pushPullRow.AddChild(_pullButton);
@@ -150,12 +170,27 @@ public class ActionSection : VBoxContainer
         _launcherUpdateButton.Visible = false;
     }
 
-    // Locks every sync-affecting button while a cloud operation is in flight.
-    // Issue #7: previously only push/pull were disabled — PLAY was still
-    // pressable, so a user who tapped Save Manager and then quickly hit PLAY
-    // could enter the game's GameStartupWrapper concurrently with the cloud
-    // handshake (race against ConstructDefaultPrefix's cache preload). PLAY
-    // now stays disabled until the in-flight sync resolves.
+    // Remembers whether the update-check buttons were already disabled by
+    // their own in-flight check (OnCheckGameUpdatePressed / RunLauncherUpdateCheck
+    // in LauncherController) at the moment SetSyncBusy(true) ran, so releasing
+    // sync-busy restores that state instead of unconditionally re-enabling a
+    // button whose own unrelated operation is still running.
+    private bool _gameUpdatePrevDisabled;
+    private bool _launcherUpdatePrevDisabled;
+
+    // Locks every button in this section while a cloud/local-save operation is
+    // in flight. Issue #7: previously only push/pull were disabled — PLAY was
+    // still pressable, so a user who tapped Save Manager and then quickly hit
+    // PLAY could enter the game's GameStartupWrapper concurrently with the
+    // cloud handshake (race against ConstructDefaultPrefix's cache preload).
+    // Extended further: a device log showed the Save Manager button itself
+    // re-tapped while its own KeepCloud apply was mid-file-pull — SetSyncBusy
+    // didn't cover every interactive control in this section (Auto Sync
+    // toggle, the update-check buttons), all of which can race the same
+    // global UserDataPathProvider.IsRunningModded toggle or overlap Steam
+    // connection usage. ModManagerButton itself lives outside this section
+    // (LauncherView) — see LauncherView.SetCloudOpBusy, which calls this and
+    // also disables it.
     public void SetSyncBusy(bool busy)
     {
         _pushButton.Disabled = busy;
@@ -164,6 +199,21 @@ public class ActionSection : VBoxContainer
         // A manual backup snapshots the same save tree the sync touches, so
         // keep it locked while a cloud op (or another backup) is in flight.
         _localBackupButton.Disabled = busy;
+        _retryButton.Disabled = busy;
+        _cloudSyncToggle.Disabled = busy;
+
+        if (busy)
+        {
+            _gameUpdatePrevDisabled = _gameUpdateButton.Disabled;
+            _launcherUpdatePrevDisabled = _launcherUpdateButton.Disabled;
+            _gameUpdateButton.Disabled = true;
+            _launcherUpdateButton.Disabled = true;
+        }
+        else
+        {
+            _gameUpdateButton.Disabled = _gameUpdatePrevDisabled;
+            _launcherUpdateButton.Disabled = _launcherUpdatePrevDisabled;
+        }
     }
 
     public void SetGameUpdateButtonText(string text) => _gameUpdateButton.Text = text;

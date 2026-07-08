@@ -75,16 +75,24 @@ public class CloudConflictDialog : ColorRect
             EmptyCardHeight = Px(80),
             CardsRowSeparation = Px(16),
             ButtonRowSeparation = Px(12),
-            ButtonHeight = Px(48),
+            // Floored at the main launcher screen's own action-button height
+            // (StyledButton.MainActionHeight) — user report: "save manager
+            // 글자가 너무 작아". On a short viewport `d` alone shrank this well
+            // below the button the user tapped to open the dialog.
+            ButtonHeight = Math.Max(StyledButton.MainActionHeight, Px(48)),
             CancelWidth = Px(140),
             ChoiceWidth = Px(160),
-            // Font sizes — floor at readable sizes
-            TitleFs = Fs(22, 14),
+            // Font sizes — floor at readable sizes. Title/button floors are
+            // pinned to (or above) StyledButton.MainActionFontSize so the
+            // dialog never reads smaller than the main screen's buttons; card
+            // body text keeps its previous, lower floors by design (dense
+            // stat rows, not the primary tap targets).
+            TitleFs = Fs(22, 16),
             SubtitleFs = Fs(13, 10),
             CardTitleFs = Fs(16, 11),
             CardRowFs = Fs(12, 9),
             BadgeFs = Fs(11, 8),
-            ButtonFs = Fs(14, 11),
+            ButtonFs = Fs(14, StyledButton.MainActionFontSize),
         };
     }
 

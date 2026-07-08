@@ -23,12 +23,52 @@ public class ProfilePickerDialog : ColorRect
 
     public Task<SyncDecisionResult> Result => _result.Task;
 
+    // Pre-scale logical sizes for a 1700px-tall viewport (same convention as
+    // CloudConflictDialog.DialogSizing), each floored so a short viewport's
+    // compact-mode shrink can never render the slot buttons/title smaller
+    // than the main launcher screen's own buttons (StyledButton.
+    // MainActionFontSize/MainActionHeight — ActionSection, SAVE MANAGER).
+    //
+    // Root cause of the original "글자가 너무 작아" report: this constructor
+    // used to fold the viewport density factor `d` directly into `scale`
+    // (`scale *= d;`) before applying it to literal numbers that otherwise
+    // matched the main buttons (fontSize 14 / height 44) — so on any device
+    // shorter than the 1700px baseline (i.e. most phones in landscape),
+    // everything in this dialog rendered smaller than what the user just
+    // tapped to open it. Floors here guarantee that can't happen again.
+    private struct DialogSizing
+    {
+        public int TitleFs;
+        public int HintFs;
+        public int RowHeight;
+        public int RowTitleFs;
+        public int RowSubtitleFs;
+        public int BadgeFs;
+        public int CloseFs;
+        public int CloseHeight;
+    }
+
+    private static DialogSizing ResolveSizing(float viewportHeight)
+    {
+        float d = Mathf.Clamp(viewportHeight / 1700f, 0.55f, 1.0f);
+        int Px(int v) => Math.Max(1, (int)Math.Round(v * d));
+        int PxFloor(int v, int floor) => Math.Max(floor, (int)Math.Round(v * d));
+        return new DialogSizing
+        {
+            TitleFs = PxFloor(20, 16),
+            HintFs = Px(12),
+            RowHeight = PxFloor(60, StyledButton.MainActionHeight),
+            RowTitleFs = PxFloor(15, StyledButton.MainActionFontSize),
+            RowSubtitleFs = PxFloor(11, 12),
+            BadgeFs = PxFloor(11, 12),
+            CloseFs = PxFloor(14, StyledButton.MainActionFontSize),
+            CloseHeight = PxFloor(44, StyledButton.MainActionHeight),
+        };
+    }
+
     public ProfilePickerDialog(IReadOnlyList<SyncDecisionResult> slots, float scale, float viewportHeight)
     {
-        // Same compact-viewport handling as CloudConflictDialog so the list
-        // still fits (and its rows stay tappable) on a folded Fold cover screen.
-        float d = Mathf.Clamp(viewportHeight / 1700f, 0.55f, 1.0f);
-        scale *= d;
+        var sz = ResolveSizing(viewportHeight);
 
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.7f);
@@ -48,13 +88,13 @@ public class ProfilePickerDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(14 * scale));
         dialogBox.AddChild(vbox);
 
-        var title = new StyledLabel("Save Manager", scale, fontSize: 20);
+        var title = new StyledLabel("Save Manager", scale, fontSize: sz.TitleFs);
         vbox.AddChild(title);
 
         var hint = new StyledLabel(
             "프로필별로 로컬과 Steam Cloud의 진행도를 확인하고 개별적으로 동기화할 수 있습니다.",
             scale,
-            fontSize: 12
+            fontSize: sz.HintFs
         );
         hint.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.75f));
         hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
@@ -67,13 +107,18 @@ public class ProfilePickerDialog : ColorRect
         vbox.AddChild(rows);
 
         foreach (var slot in slots)
-            rows.AddChild(BuildRow(slot, scale, Resolve));
+            rows.AddChild(BuildRow(slot, scale, sz, Resolve));
 
         var buttonRow = new HBoxContainer();
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
 
-        var closeButton = new StyledButton("닫기", scale, fontSize: 14, height: 44);
+        var closeButton = new StyledButton(
+            "닫기",
+            scale,
+            fontSize: sz.CloseFs,
+            height: sz.CloseHeight
+        );
         closeButton.CustomMinimumSize = new Vector2(
             (int)(120 * scale),
             closeButton.CustomMinimumSize.Y
@@ -91,12 +136,17 @@ public class ProfilePickerDialog : ColorRect
         _result.TrySetResult(slot);
     }
 
-    private static Control BuildRow(SyncDecisionResult slot, float scale, Action<SyncDecisionResult> onPick)
+    private static Control BuildRow(
+        SyncDecisionResult slot,
+        float scale,
+        DialogSizing sz,
+        Action<SyncDecisionResult> onPick
+    )
     {
         var row = new Button();
         row.Flat = true;
         row.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
-        row.CustomMinimumSize = new Vector2(0, (int)(60 * scale));
+        row.CustomMinimumSize = new Vector2(0, (int)(sz.RowHeight * scale));
 
         var r = (int)(6 * scale);
         row.AddThemeStyleboxOverride("normal", StyledButton.MakeFilled(new Color(0.18f, 0.18f, 0.22f), r));
@@ -124,7 +174,7 @@ public class ProfilePickerDialog : ColorRect
         var titleLabel = new StyledLabel(
             slot.LocalSummary.ProfileLabel,
             scale,
-            fontSize: 15,
+            fontSize: sz.RowTitleFs,
             align: HorizontalAlignment.Left
         );
         textCol.AddChild(titleLabel);
@@ -132,7 +182,7 @@ public class ProfilePickerDialog : ColorRect
         var subtitleLabel = new StyledLabel(
             DescribeSlot(slot),
             scale,
-            fontSize: 11,
+            fontSize: sz.RowSubtitleFs,
             align: HorizontalAlignment.Left
         );
         subtitleLabel.Modulate = new Color(1, 1, 1, 0.55f);
@@ -156,7 +206,7 @@ public class ProfilePickerDialog : ColorRect
         badge.AddThemeStyleboxOverride("panel", badgeStyle);
         badge.MouseFilter = Control.MouseFilterEnum.Ignore;
         badge.SizeFlagsVertical = SizeFlags.ShrinkCenter;
-        var badgeLabel = new StyledLabel(badgeText, scale, fontSize: 11);
+        var badgeLabel = new StyledLabel(badgeText, scale, fontSize: sz.BadgeFs);
         badgeLabel.MouseFilter = Control.MouseFilterEnum.Ignore;
         badge.AddChild(badgeLabel);
         hbox.AddChild(badge);

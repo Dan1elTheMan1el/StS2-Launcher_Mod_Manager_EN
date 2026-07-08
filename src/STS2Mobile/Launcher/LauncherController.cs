@@ -28,6 +28,19 @@ public class LauncherController
     // set → Play 버튼이 "앱 재시작 필요" 로 분기됨.
     private bool _pendingBranchSwitch;
 
+    // Reentrancy guard shared by every handler that touches local saves or
+    // Steam Cloud (Save Manager, Local Backup, Push, Pull) — all of them
+    // toggle the global UserDataPathProvider.IsRunningModded, so two of them
+    // running at once risks one seeing the other's mid-flip mod state. A
+    // device log caught the Save Manager button re-tapped while its own
+    // KeepCloud apply was still mid-file-pull (SetSyncBusy didn't cover that
+    // button — see LauncherView.SetCloudOpBusy). Checked-and-set as the very
+    // first thing each handler's actual work does; disabling the buttons via
+    // SetCloudOpBusy is the visible half of the same guard, this bool is the
+    // backstop that doesn't depend on Godot's disabled-button-blocks-signal
+    // timing.
+    private bool _cloudOpInProgress;
+
     public LauncherController(
         LauncherModel model,
         LauncherView view,
@@ -290,8 +303,12 @@ public class LauncherController
     // below) for when that flow is finished.
     private async void OnModManagerPressed()
     {
+        if (_cloudOpInProgress)
+            return;
+        _cloudOpInProgress = true;
+
         PatchHelper.Log("[Mods] Save Manager button tapped");
-        _view.Actions.SetSyncBusy(true);
+        _view.SetCloudOpBusy(true);
         _view.SetStatus("Save Manager");
         try
         {
@@ -303,7 +320,8 @@ public class LauncherController
         }
         finally
         {
-            _view.Actions.SetSyncBusy(false);
+            _view.SetCloudOpBusy(false);
+            _cloudOpInProgress = false;
         }
         // Original navigation:
         // _view.ShowModManager();
@@ -868,46 +886,66 @@ public class LauncherController
             "현재 세이브 데이터를 로컬에 백업할까요?",
             () =>
             {
+                if (_cloudOpInProgress)
+                    return;
+                _cloudOpInProgress = true;
+
                 AppPaths.EnsureExternalDirectories();
-                _view.Actions.SetSyncBusy(true);
+                _view.SetCloudOpBusy(true);
                 _view.AppendLog("Backing up saves locally...");
                 // BackupNow() is synchronous and does file I/O — run it off the
-                // main thread, then marshal the result back for UI.
+                // main thread, then marshal the result back for UI. Wrapped in
+                // try/finally so an unexpected throw still releases the busy
+                // lock/guard instead of leaving every save-touching button
+                // disabled for the rest of the session.
                 Task.Run(() =>
                 {
-                    var result = LocalBackupService.BackupNow();
-                    _runOnMainThread(() =>
+                    try
                     {
-                        _view.Actions.SetSyncBusy(false);
-
-                        // Permission can be revoked between the pre-check above
-                        // and the call; surface that path explicitly.
-                        if (!result.Success && result.NeedsPermission)
+                        var result = LocalBackupService.BackupNow();
+                        _runOnMainThread(() =>
                         {
-                            AppPaths.RequestStoragePermission();
-                            _view.AppendLog("Local backup needs storage permission.");
-                            _view.ShowConfirmation(
-                                "백업하려면 저장공간 접근 권한이 필요합니다.\n권한을 허용한 뒤 다시 시도하세요.",
-                                onConfirmed: null,
-                                okLabel: "확인",
-                                cancelLabel: "닫기"
-                            );
-                            return;
-                        }
+                            // Permission can be revoked between the pre-check above
+                            // and the call; surface that path explicitly.
+                            if (!result.Success && result.NeedsPermission)
+                            {
+                                AppPaths.RequestStoragePermission();
+                                _view.AppendLog("Local backup needs storage permission.");
+                                _view.ShowConfirmation(
+                                    "백업하려면 저장공간 접근 권한이 필요합니다.\n권한을 허용한 뒤 다시 시도하세요.",
+                                    onConfirmed: null,
+                                    okLabel: "확인",
+                                    cancelLabel: "닫기"
+                                );
+                                return;
+                            }
 
-                        _view.AppendLog(
-                            result.Success
-                                ? $"Local backup complete: {result.FileCount} file(s)."
-                                : $"Local backup failed: {result.Error}"
-                        );
-                        _view.ShowBackupResult(
-                            result.Success,
-                            result.FileCount,
-                            result.TotalBytes,
-                            result.DestPath,
-                            result.Error
-                        );
-                    });
+                            _view.AppendLog(
+                                result.Success
+                                    ? $"Local backup complete: {result.FileCount} file(s)."
+                                    : $"Local backup failed: {result.Error}"
+                            );
+                            _view.ShowBackupResult(
+                                result.Success,
+                                result.FileCount,
+                                result.TotalBytes,
+                                result.DestPath,
+                                result.Error
+                            );
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _runOnMainThread(() => _view.AppendLog($"Local backup threw: {ex.Message}"));
+                    }
+                    finally
+                    {
+                        _runOnMainThread(() =>
+                        {
+                            _view.SetCloudOpBusy(false);
+                            _cloudOpInProgress = false;
+                        });
+                    }
                 });
             }
         );
@@ -925,19 +963,34 @@ public class LauncherController
             "Push local saves to cloud?\nThis will overwrite your cloud saves.",
             () =>
             {
-                _view.Actions.SetSyncBusy(true);
+                if (_cloudOpInProgress)
+                    return;
+                _cloudOpInProgress = true;
+
+                _view.SetCloudOpBusy(true);
                 _view.AppendLog("Pushing local saves to cloud...");
                 Task.Run(async () =>
                 {
-                    await CloudSyncCoordinator.ManualPushAllAsync(
-                        LauncherPatches.SavedAccountName,
-                        LauncherPatches.SavedRefreshToken
-                    );
-                    _runOnMainThread(() =>
+                    try
                     {
-                        _view.AppendLog("Push complete.");
-                        _view.Actions.SetSyncBusy(false);
-                    });
+                        await CloudSyncCoordinator.ManualPushAllAsync(
+                            LauncherPatches.SavedAccountName,
+                            LauncherPatches.SavedRefreshToken
+                        );
+                        _runOnMainThread(() => _view.AppendLog("Push complete."));
+                    }
+                    catch (Exception ex)
+                    {
+                        _runOnMainThread(() => _view.AppendLog($"Push failed: {ex.Message}"));
+                    }
+                    finally
+                    {
+                        _runOnMainThread(() =>
+                        {
+                            _view.SetCloudOpBusy(false);
+                            _cloudOpInProgress = false;
+                        });
+                    }
                 });
             }
         );
@@ -949,19 +1002,34 @@ public class LauncherController
             "Pull cloud saves to local?\nThis will overwrite your local saves.",
             () =>
             {
-                _view.Actions.SetSyncBusy(true);
+                if (_cloudOpInProgress)
+                    return;
+                _cloudOpInProgress = true;
+
+                _view.SetCloudOpBusy(true);
                 _view.AppendLog("Pulling cloud saves to local...");
                 Task.Run(async () =>
                 {
-                    await CloudSyncCoordinator.ManualPullAllAsync(
-                        LauncherPatches.SavedAccountName,
-                        LauncherPatches.SavedRefreshToken
-                    );
-                    _runOnMainThread(() =>
+                    try
                     {
-                        _view.AppendLog("Pull complete.");
-                        _view.Actions.SetSyncBusy(false);
-                    });
+                        await CloudSyncCoordinator.ManualPullAllAsync(
+                            LauncherPatches.SavedAccountName,
+                            LauncherPatches.SavedRefreshToken
+                        );
+                        _runOnMainThread(() => _view.AppendLog("Pull complete."));
+                    }
+                    catch (Exception ex)
+                    {
+                        _runOnMainThread(() => _view.AppendLog($"Pull failed: {ex.Message}"));
+                    }
+                    finally
+                    {
+                        _runOnMainThread(() =>
+                        {
+                            _view.SetCloudOpBusy(false);
+                            _cloudOpInProgress = false;
+                        });
+                    }
                 });
             }
         );
