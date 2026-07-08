@@ -35,6 +35,12 @@
 - steam B1(mirror-delete 오발), A1 파괴 서브케이스, quota 초과 EResult 실측 — device-test-qa 재현 항목.
 - Steam Cloud 파일당 크기 한도/time_stamp 단위 — 1차 자료 없음, 관측 로깅 권고.
 
+### 2026-07-08 저녁 갱신 (사용자 환경 변화 + 추가 판정)
+
+- **UnifiedSavePath는 사용자가 삭제**(베타 비호환) → G4/H2 aliasing 위험은 **향후 소멸**. 잔존물: 과거 활성기에 생긴 유령 unmodded profile2(1550B)가 로컬·클라우드에 남아있을 수 있음 → 정리 후보(재연결 시 백업 스냅샷으로 내용 확인 후). 모드 재설치 시 위험 재발 — 운영 안내 유지.
+- **PC는 SaveMerger 모드 사용 중** (`D:\SteamLibrary\...\mods\savemanager\SaveMerger.dll`, 디컴파일 완료): base(vanilla)→modded 방향 **단방향 복사 도구**. 부팅 시 "vanilla ≥4KB && modded <2KB"면 자동 병합, 실행 전 양쪽을 Documents\STS2-SaveMerger-Backups에 백업, 쓰기는 게임 SaveManager 경유(배치). GetProfileDir/IsRunningModded 미패치 → UnifiedSavePath류 aliasing **없음**. 유령 profile2의 원인 아님. 위험도: 낮음(백업 내장, 검증 실패 시 중단). 유의점: 병합이 vanilla 콘텐츠를 modded 슬롯에 주입하므로 콘텐츠 혼합은 설계상 존재(unknown-버킷 보존으로 무해).
+- **P0-2 근거 정밀화**: v0.107↔v0.108의 `SerializableProgress` **필드 구조 완전 동일**(주석 제외 diff 0건) → 현 v21↔v22 페어에서 "폐기되는 신규 필드"는 사실상 없음 = 사용자의 "PC에서 버전 이동해도 무탈" 체감과 정합. 잔여 위험은 ① 복구 실패 시 CreateDefault+즉시 재저장 분기(코드 사실, 미관측) ② 미래에 실제 필드가 바뀌는 버전 bump. → P0-2는 **경량판**(복구 모드 세션의 첫 progress push에만 1회 확인)으로 강도 하향.
+
 ### 반증된 가설 (조치 불필요)
 
 - **BaseLib 동적 ModelId 해시 ≠ 세이브 위협**: ModelId는 문자열("CATEGORY.ENTRY")로 직렬화, 런타임 해시 미포함. 미등록 키는 _unknown* 버킷 보존 후 재emit — "Unknown card ID" 경고 무해.
