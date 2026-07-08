@@ -25,12 +25,25 @@ public class ModDetailDialog : ColorRect
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
+        MouseFilter = MouseFilterEnum.Stop;
+        // Safety net so a modal can never trap the user: tapping the dimmed area
+        // outside the panel closes it.
+        GuiInput += ev =>
+        {
+            if (
+                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                or InputEventScreenTouch { Pressed: true }
+            )
+                QueueFree();
+        };
 
         var center = new CenterContainer();
         center.SetAnchorsPreset(LayoutPreset.FullRect);
+        center.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(center);
 
         var box = new PanelContainer();
+        box.MouseFilter = MouseFilterEnum.Stop;
         var boxStyle = new StyleBoxFlat();
         boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
         boxStyle.SetCornerRadiusAll((int)(8 * scale));

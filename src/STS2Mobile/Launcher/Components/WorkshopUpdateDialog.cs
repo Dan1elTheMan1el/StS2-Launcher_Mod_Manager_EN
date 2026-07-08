@@ -23,12 +23,28 @@ public class WorkshopUpdateDialog : ColorRect
 
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
+        MouseFilter = MouseFilterEnum.Stop;
+        // Tapping the dimmed area outside the panel dismisses (and fires onClose),
+        // so the user is never trapped by the overlay.
+        GuiInput += ev =>
+        {
+            if (
+                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                or InputEventScreenTouch { Pressed: true }
+            )
+            {
+                QueueFree();
+                onClose?.Invoke();
+            }
+        };
 
         var center = new CenterContainer();
         center.SetAnchorsPreset(LayoutPreset.FullRect);
+        center.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(center);
 
         var box = new PanelContainer();
+        box.MouseFilter = MouseFilterEnum.Stop;
         var boxStyle = new StyleBoxFlat();
         boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
         boxStyle.SetCornerRadiusAll((int)(8 * scale));

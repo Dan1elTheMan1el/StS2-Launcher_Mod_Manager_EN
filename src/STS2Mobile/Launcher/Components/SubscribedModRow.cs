@@ -31,7 +31,9 @@ public class SubscribedModRow : PanelContainer
         vbox.AddThemeConstantOverride("separation", (int)(2 * scale));
         row.AddChild(vbox);
 
-        var titleText = string.IsNullOrWhiteSpace(version) ? title : $"{title} v{version}";
+        var titleText = string.IsNullOrWhiteSpace(version)
+            ? title
+            : $"{title} {STS2Mobile.Launcher.LauncherModel.VersionLabel(version)}";
         var titleLabel = new StyledLabel(
             titleText,
             scale,

@@ -127,7 +127,7 @@ public class WorkshopSubscribedPane : VBoxContainer
             RunOnMain(() =>
             {
                 var dialog = new WorkshopUpdateDialog(header, titles, _scale);
-                GetTree()?.Root?.AddChild(dialog);
+                LauncherOverlay.Show(this, dialog);
             });
         }
 
@@ -299,15 +299,19 @@ public class WorkshopSubscribedPane : VBoxContainer
             titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             info.AddChild(titleLabel);
 
-            var installed = string.IsNullOrEmpty(c.InstalledVersion) ? "?" : c.InstalledVersion;
-            var workshop = string.IsNullOrEmpty(c.WorkshopVersion) ? "?" : c.WorkshopVersion;
+            var installed = string.IsNullOrEmpty(c.InstalledVersion)
+                ? "v?"
+                : LauncherModel.VersionLabel(c.InstalledVersion);
+            var workshop = string.IsNullOrEmpty(c.WorkshopVersion)
+                ? "v?"
+                : LauncherModel.VersionLabel(c.WorkshopVersion);
             var cmp = CompareVersions(c.WorkshopVersion, c.InstalledVersion);
             var note =
                 cmp > 0 ? " — Workshop is newer"
                 : cmp < 0 ? " — your copy is newer"
                 : " — same version";
             var verLabel = new StyledLabel(
-                $"installed v{installed} · Workshop v{workshop}{note}",
+                $"installed {installed} · Workshop {workshop}{note}",
                 _scale,
                 fontSize: 11,
                 align: HorizontalAlignment.Left
@@ -328,7 +332,7 @@ public class WorkshopSubscribedPane : VBoxContainer
     private void OnUseWorkshopPressed(WorkshopConflictItem c) =>
         ConfirmationRequested?.Invoke(
             $"Replace your manually installed '{c.ModId}' with the Workshop version "
-                + $"(v{(string.IsNullOrEmpty(c.WorkshopVersion) ? "?" : c.WorkshopVersion)})?\n"
+                + $"({(string.IsNullOrEmpty(c.WorkshopVersion) ? "v?" : LauncherModel.VersionLabel(c.WorkshopVersion))})?\n"
                 + "Your manual copy's folder will be removed.",
             () => _ = Task.Run(() => DoUseWorkshopAsync(c)),
             null
@@ -386,7 +390,7 @@ public class WorkshopSubscribedPane : VBoxContainer
             new[]
             {
                 string.IsNullOrWhiteSpace(m?.Author) ? null : "by " + m.Author,
-                string.IsNullOrWhiteSpace(m?.Version) ? null : "v" + m.Version,
+                string.IsNullOrWhiteSpace(m?.Version) ? null : LauncherModel.VersionLabel(m.Version),
             }.Where(s => s != null)
         );
 
@@ -413,7 +417,7 @@ public class WorkshopSubscribedPane : VBoxContainer
             actionCallback: () => OnUnsubscribePressed(entry),
             actionDanger: true
         );
-        GetTree()?.Root?.AddChild(dialog);
+        LauncherOverlay.Show(this, dialog);
     }
 
     private async Task DoUnsubscribeAsync(ModConfigEntry entry)

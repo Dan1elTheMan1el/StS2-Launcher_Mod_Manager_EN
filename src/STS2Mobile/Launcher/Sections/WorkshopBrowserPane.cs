@@ -341,7 +341,7 @@ public class WorkshopBrowserPane : VBoxContainer
             facts,
             _scale
         );
-        GetTree()?.Root?.AddChild(dialog);
+        LauncherOverlay.Show(this, dialog);
     }
 
     private async Task LoadThumbnailAsync(ulong pfid, string previewUrl)
@@ -453,7 +453,7 @@ public class WorkshopBrowserPane : VBoxContainer
                 _scale,
                 dep => SubscribeDependencyAsync(dep)
             );
-            GetTree()?.Root?.AddChild(dialog);
+            LauncherOverlay.Show(this, dialog);
         });
     }
 

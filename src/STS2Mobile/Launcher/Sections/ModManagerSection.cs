@@ -363,7 +363,7 @@ public class ModManagerSection : VBoxContainer
             new[]
             {
                 string.IsNullOrWhiteSpace(m.Author) ? null : "by " + m.Author,
-                string.IsNullOrWhiteSpace(m.Version) ? null : "v" + m.Version,
+                string.IsNullOrWhiteSpace(m.Version) ? null : LauncherModel.VersionLabel(m.Version),
             }.Where(s => s != null)
         );
 
@@ -388,7 +388,7 @@ public class ModManagerSection : VBoxContainer
             actionCallback: removable ? () => OnRowRemovePressed(info) : null,
             actionDanger: true
         );
-        GetTree()?.Root?.AddChild(dialog);
+        LauncherOverlay.Show(this, dialog);
     }
 
     // Root-level "*.json" manifests directly under Mods/ (not inside a folder) are

@@ -74,7 +74,7 @@ public class ModListRow : PanelContainer
         var name = info.Manifest.DisplayName;
         var version = string.IsNullOrWhiteSpace(info.Manifest.Version)
             ? ""
-            : " v" + info.Manifest.Version;
+            : " " + STS2Mobile.Launcher.LauncherModel.VersionLabel(info.Manifest.Version);
         var author = string.IsNullOrWhiteSpace(info.Manifest.Author)
             ? ""
             : " — " + info.Manifest.Author;

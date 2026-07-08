@@ -501,6 +501,17 @@ public class LauncherModel : IDisposable
         return $"{bytes / 1024.0:F0} KB";
     }
 
+    // Normalizes a manifest version string to a single "v" prefix so mods whose
+    // version already includes it (e.g. BaseLib's "v3.3.5") don't render as
+    // "vv3.3.5". Empty for a blank version.
+    public static string VersionLabel(string v)
+    {
+        if (string.IsNullOrWhiteSpace(v))
+            return "";
+        v = v.Trim();
+        return v.StartsWith("v") || v.StartsWith("V") ? v : "v" + v;
+    }
+
     // Issue #36 Part A: the Local Backup on/off preference was removed. Backup
     // is now a one-shot action (ActionSection's Local Backup button), so there's
     // no persisted enabled/disabled state to load or save.
