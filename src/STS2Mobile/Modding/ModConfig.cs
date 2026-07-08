@@ -20,6 +20,24 @@ public class ModConfig
     [JsonPropertyName("mods")]
     public List<ModConfigEntry> Mods { get; set; } = new();
 
+    // Workshop items whose manifest id is already installed from another source
+    // (a manual install, possibly in a differently-named folder). Remembered by
+    // published-file id + the item's time_updated so the sync engine stops
+    // re-downloading a subscribed item every visit just because it can't be
+    // committed (issue #58). Omitted from the file when empty.
+    private List<WorkshopConflictEntry> _conflicts = new();
+
+    [JsonPropertyName("workshopConflicts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<WorkshopConflictEntry> WorkshopConflicts
+    {
+        get => _conflicts.Count == 0 ? null : _conflicts;
+        set => _conflicts = value ?? new List<WorkshopConflictEntry>();
+    }
+
+    [JsonIgnore]
+    public IReadOnlyList<WorkshopConflictEntry> ConflictRecords => _conflicts;
+
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
@@ -118,6 +136,26 @@ public class ModConfig
 
     public void Remove(string id) => Mods.RemoveAll(m => m.Id == id);
 
+    // Records that a subscribed Workshop item (pfid) resolves to a mod id that is
+    // already installed from another source, so the sync engine can stop retrying
+    // it until the item is updated on Steam (time_updated advances).
+    public void RememberConflict(ulong pfid, string modId, long timeUpdated, string workshopVersion)
+    {
+        if (pfid == 0)
+            return;
+        var e = _conflicts.FirstOrDefault(c => c.PublishedFileId == pfid);
+        if (e == null)
+        {
+            e = new WorkshopConflictEntry { PublishedFileId = pfid };
+            _conflicts.Add(e);
+        }
+        e.ModId = modId;
+        e.TimeUpdated = timeUpdated;
+        e.WorkshopVersion = workshopVersion;
+    }
+
+    public void ClearConflict(ulong pfid) => _conflicts.RemoveAll(c => c.PublishedFileId == pfid);
+
     public void Move(string id, int delta)
     {
         Mods = Mods.OrderBy(m => m.Order).ToList();
@@ -164,4 +202,28 @@ public class ModConfigEntry
 
     [JsonIgnore]
     public bool IsWorkshop => Source == SourceWorkshop;
+}
+
+// A subscribed Workshop item whose mod id collides with an already-installed mod
+// from another source. Kept separate from Mods (which is keyed by id — the id is
+// taken by the existing install) so the sync engine can remember the collision by
+// published-file id and avoid re-downloading it every visit.
+public class WorkshopConflictEntry
+{
+    [JsonPropertyName("publishedFileId")]
+    public ulong PublishedFileId { get; set; }
+
+    [JsonPropertyName("id")]
+    public string ModId { get; set; }
+
+    [JsonPropertyName("timeUpdated")]
+    public long TimeUpdated { get; set; }
+
+    // The Workshop copy's manifest version, captured at download time. Compared
+    // against the installed (manual) copy's version so version drift between the
+    // two is visible and resolvable, instead of the manual copy silently going
+    // stale forever.
+    [JsonPropertyName("workshopVersion")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string WorkshopVersion { get; set; }
 }

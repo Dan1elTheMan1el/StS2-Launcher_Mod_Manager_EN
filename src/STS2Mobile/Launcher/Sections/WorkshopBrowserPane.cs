@@ -330,16 +330,16 @@ public class WorkshopBrowserPane : VBoxContainer
             if (path == null)
                 return;
 
-            var image = new Image();
-            var err = image.Load(path);
-            if (err != Error.Ok)
+            // Decode off the main thread (file read + image decode); extension-
+            // independent magic-byte loader since cached files may be ".img".
+            var tex = ThumbnailLoader.LoadTexture(path);
+            if (tex == null)
                 return;
 
             RunOnMain(() =>
             {
                 if (!_cardsByPfid.TryGetValue(pfid, out var card) || !IsInstanceValid(card))
                     return;
-                var tex = ImageTexture.CreateFromImage(image);
                 card.SetThumbnail(tex);
             });
         }

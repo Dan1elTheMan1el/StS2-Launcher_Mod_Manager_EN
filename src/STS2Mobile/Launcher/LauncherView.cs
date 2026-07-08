@@ -36,6 +36,26 @@ public class LauncherView
         _scale = scale;
         parent.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 
+        // The launcher UI otherwise inherits Godot's built-in Latin-only default
+        // font, so CJK mod names (e.g. Workshop titles like "海克斯符文" or Japanese
+        // mods) render as tofu boxes. Apply a SystemFont with OS fallback as the
+        // theme's default font on the launcher root — on Android this resolves
+        // through the system stack (Roboto → NotoSansCJK) and cascades to every
+        // descendant Control (labels, buttons, line edits). Scoped to the launcher
+        // tree, so the game's own theming is untouched.
+        try
+        {
+            var sysFont = new SystemFont();
+            sysFont.FontNames = new[] { "sans-serif" };
+            sysFont.AllowSystemFallback = true;
+            var theme = new Theme { DefaultFont = sysFont };
+            parent.Theme = theme;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] Failed to set CJK-capable theme font: {ex.Message}");
+        }
+
         var vpSize = parent.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1920, 1080);
 
         var bg = new ScreenBackground();

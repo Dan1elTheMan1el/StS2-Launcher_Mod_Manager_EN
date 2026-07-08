@@ -29,6 +29,8 @@ public class WorkshopSubscribedPane : VBoxContainer
     private SteamConnection _connection;
     private WorkshopDownloadQueue _queue;
     private HashSet<ulong> _updateAvailablePfids = new();
+    private List<WorkshopConflictItem> _conflicts = new();
+    private Func<Task<(bool ok, SteamConnection conn)>> _ensureSession;
     private bool _loggedIn;
 
     public WorkshopSubscribedPane(float scale)
@@ -57,8 +59,11 @@ public class WorkshopSubscribedPane : VBoxContainer
     // Called every time SUBSCRIBED becomes the active tab — always re-syncs (see
     // class comment). ModManagerSection also calls RenderList() directly on queue
     // Changed events while this pane is visible, for live download progress.
-    public void Activate(Func<Task<(bool ok, SteamConnection conn)>> ensureSession) =>
+    public void Activate(Func<Task<(bool ok, SteamConnection conn)>> ensureSession)
+    {
+        _ensureSession = ensureSession;
         _ = Task.Run(() => SyncAsync(ensureSession));
+    }
 
     private async Task SyncAsync(Func<Task<(bool ok, SteamConnection conn)>> ensureSession)
     {
@@ -101,6 +106,7 @@ public class WorkshopSubscribedPane : VBoxContainer
                 _queue.Enqueue(item);
         }
         _updateAvailablePfids = new HashSet<ulong>(plan.ToUpdate.Select(i => i.PublishedFileId));
+        _conflicts = plan.Conflicts;
 
         if (plan.StaleEntries.Count > 0)
         {
@@ -219,6 +225,124 @@ public class WorkshopSubscribedPane : VBoxContainer
             row.UnsubscribePressed += () => OnUnsubscribePressed(capturedEntry);
             _list.AddChild(row);
         }
+
+        RenderConflicts();
+    }
+
+    // Subscribed items whose mod id is also installed manually. The Workshop copy
+    // isn't applied (we won't overwrite a manual install); show the version drift
+    // so the user isn't silently stuck on a stale copy, and offer a one-tap switch
+    // to the Workshop version.
+    private void RenderConflicts()
+    {
+        if (_conflicts == null || _conflicts.Count == 0)
+            return;
+
+        var header = new StyledLabel(
+            "Also installed manually — Workshop copy not applied:",
+            _scale,
+            fontSize: 11,
+            align: HorizontalAlignment.Left
+        );
+        header.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        header.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.4f));
+        _list.AddChild(header);
+
+        foreach (var c in _conflicts)
+        {
+            var panel = new PanelContainer();
+            var bg = new StyleBoxFlat();
+            bg.BgColor = new Color(0.22f, 0.19f, 0.14f);
+            bg.SetCornerRadiusAll((int)(4 * _scale));
+            bg.SetContentMarginAll((int)(8 * _scale));
+            panel.AddThemeStyleboxOverride("panel", bg);
+
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", (int)(8 * _scale));
+            panel.AddChild(row);
+
+            var info = new VBoxContainer();
+            info.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            row.AddChild(info);
+
+            var titleLabel = new StyledLabel(
+                c.Title ?? c.ModId,
+                _scale,
+                fontSize: 13,
+                align: HorizontalAlignment.Left
+            );
+            titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            info.AddChild(titleLabel);
+
+            var installed = string.IsNullOrEmpty(c.InstalledVersion) ? "?" : c.InstalledVersion;
+            var workshop = string.IsNullOrEmpty(c.WorkshopVersion) ? "?" : c.WorkshopVersion;
+            var cmp = CompareVersions(c.WorkshopVersion, c.InstalledVersion);
+            var note =
+                cmp > 0 ? " — Workshop is newer"
+                : cmp < 0 ? " — your copy is newer"
+                : " — same version";
+            var verLabel = new StyledLabel(
+                $"installed v{installed} · Workshop v{workshop}{note}",
+                _scale,
+                fontSize: 11,
+                align: HorizontalAlignment.Left
+            );
+            verLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.75f));
+            info.AddChild(verLabel);
+
+            var useBtn = new StyledButton("USE WORKSHOP", _scale, fontSize: 11, height: 34);
+            useBtn.CustomMinimumSize = new Vector2((int)(120 * _scale), (int)(34 * _scale));
+            var captured = c;
+            useBtn.Pressed += () => OnUseWorkshopPressed(captured);
+            row.AddChild(useBtn);
+
+            _list.AddChild(panel);
+        }
+    }
+
+    private void OnUseWorkshopPressed(WorkshopConflictItem c) =>
+        ConfirmationRequested?.Invoke(
+            $"Replace your manually installed '{c.ModId}' with the Workshop version "
+                + $"(v{(string.IsNullOrEmpty(c.WorkshopVersion) ? "?" : c.WorkshopVersion)})?\n"
+                + "Your manual copy's folder will be removed.",
+            () => _ = Task.Run(() => DoUseWorkshopAsync(c)),
+            null
+        );
+
+    private async Task DoUseWorkshopAsync(WorkshopConflictItem c)
+    {
+        if (_connection == null)
+            return;
+        RunOnMain(() => SetStatus($"Switching '{c.ModId}' to the Workshop version...", InfoColor));
+        try
+        {
+            await WorkshopSyncService
+                .ResolveConflictUseWorkshopAsync(_connection, c.PublishedFileId)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Workshop] Conflict resolve failed: {ex.Message}");
+        }
+        if (_ensureSession != null)
+            await SyncAsync(_ensureSession).ConfigureAwait(false);
+    }
+
+    // Compares dotted numeric versions ("0.2.0" vs "0.1.0"). Non-numeric segments
+    // count as 0; a missing/blank version sorts lowest. Returns >0 if a>b.
+    private static int CompareVersions(string a, string b)
+    {
+        var pa = (a ?? "").Split('.');
+        var pb = (b ?? "").Split('.');
+        int n = Math.Max(pa.Length, pb.Length);
+        for (int i = 0; i < n; i++)
+        {
+            int va = i < pa.Length && int.TryParse(pa[i], out var x) ? x : 0;
+            int vb = i < pb.Length && int.TryParse(pb[i], out var y) ? y : 0;
+            if (va != vb)
+                return va - vb;
+        }
+        return 0;
     }
 
     private void OnUnsubscribePressed(ModConfigEntry entry) =>

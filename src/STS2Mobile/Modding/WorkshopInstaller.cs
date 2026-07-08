@@ -115,16 +115,46 @@ public static class WorkshopInstaller
             var cfg = ModConfig.Load();
             var existing = cfg.Get(manifest.Id);
             var dest = Path.Combine(AppPaths.ExternalModsDir, manifest.Id);
-            bool destExists = Directory.Exists(dest);
 
-            // Conflict: an id folder is present but not tracked as a workshop mod —
-            // treat as a manual install and refuse to overwrite it.
-            if (destExists && (existing == null || !existing.IsWorkshop))
+            // Detect an existing install of this mod id ANYWHERE under Mods/, not
+            // just at Mods/<id>/. The game keys mods by manifest id, not folder
+            // name, so a manual install can live in a folder whose name differs
+            // from the id (e.g. savemanager/ holding SaveMerger.json). A
+            // folder-name-only check missed those and silently created a duplicate
+            // folder AND hijacked the manual mod's registry entry into a workshop
+            // entry (issue #58 — the SaveMerger case).
+            var sameId = ModScanner
+                .Scan()
+                .FirstOrDefault(m => string.Equals(m.Id, manifest.Id, StringComparison.Ordinal));
+
+            // We may (re)install to Mods/<id>/ only when the id isn't present, or
+            // the only present copy is our own prior Workshop download of THIS same
+            // item. Anything else (a manual install, or a different Workshop item
+            // claiming the id) is a conflict we refuse to overwrite.
+            bool ourPriorCopy =
+                existing != null
+                && existing.IsWorkshop
+                && existing.PublishedFileId == item.PublishedFileId;
+
+            if (sameId != null && !ourPriorCopy)
             {
+                var installedVersion = sameId.Manifest?.Version ?? "?";
                 PatchHelper.Log(
-                    $"[Workshop] Item {item.PublishedFileId}: id '{manifest.Id}' already installed "
-                        + "as a non-workshop mod — not overwriting (conflict)."
+                    $"[Workshop] Item {item.PublishedFileId}: mod id '{manifest.Id}' is already "
+                        + $"installed (at {sameId.TopLevelDir}, v{installedVersion}) from another "
+                        + $"source; Workshop copy is v{manifest.Version ?? "?"} — not overwriting "
+                        + "(conflict)."
                 );
+                // Remember so the sync engine stops re-downloading this every visit
+                // until the item is updated on Steam. The version is captured so the
+                // UI can show which side is stale and offer to switch.
+                cfg.RememberConflict(
+                    item.PublishedFileId,
+                    manifest.Id,
+                    item.TimeUpdated,
+                    manifest.Version
+                );
+                cfg.Save();
                 return new WorkshopInstallResult
                 {
                     Success = false,
@@ -134,7 +164,7 @@ public static class WorkshopInstaller
             }
 
             Directory.CreateDirectory(AppPaths.ExternalModsDir);
-            if (destExists)
+            if (Directory.Exists(dest))
                 Directory.Delete(dest, recursive: true);
             CopyDirectory(modRoot, dest);
 
@@ -153,6 +183,7 @@ public static class WorkshopInstaller
             existing.Source = ModConfigEntry.SourceWorkshop;
             existing.PublishedFileId = item.PublishedFileId;
             existing.TimeUpdated = item.TimeUpdated;
+            cfg.ClearConflict(item.PublishedFileId);
             cfg.Save();
 
             PatchHelper.Log(

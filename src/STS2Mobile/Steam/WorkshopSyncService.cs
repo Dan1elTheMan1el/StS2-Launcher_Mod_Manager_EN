@@ -60,10 +60,28 @@ public class WorkshopSyncPlan
     // Subscribed items excluded from install/update, with a reason.
     public List<WorkshopSkippedItem> Skipped = new();
 
+    // Subscribed items whose mod id is already installed from another source
+    // (e.g. a manual install). Not re-downloaded; surfaced so the UI can tell the
+    // user the Workshop copy isn't being applied.
+    public List<WorkshopConflictItem> Conflicts = new();
+
     public bool HasInstallWork => ToInstall.Count > 0 || ToUpdate.Count > 0;
     public bool HasOrphans => Orphans.Count > 0;
     public bool HasAnyWork =>
         HasInstallWork || Orphans.Count > 0 || StaleEntries.Count > 0;
+}
+
+// A subscribed item skipped because its mod id is already installed from another
+// source (manual, or a differently-named folder holding the same id). Carries both
+// versions so the UI can show whether the installed (manual) copy has gone stale
+// relative to the Workshop copy, and offer to switch.
+public class WorkshopConflictItem
+{
+    public ulong PublishedFileId;
+    public string ModId;
+    public string Title;
+    public string WorkshopVersion; // from the remembered conflict record
+    public string InstalledVersion; // filled from the live on-disk scan
 }
 
 public class WorkshopSyncItemResult
@@ -129,17 +147,28 @@ public static class WorkshopSyncService
             scanned.Where(e => e.Id != null).Select(e => e.Id),
             StringComparer.Ordinal
         );
-        var displayNames = scanned
+        var byId = scanned
             .Where(e => e.Id != null)
             .GroupBy(e => e.Id, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().Manifest?.DisplayName, StringComparer.Ordinal);
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
         var plan = ComputePlan(
             subscriptions,
             cfg.Mods,
             installedIds,
-            id => displayNames.TryGetValue(id, out var n) && n != null ? n : id
+            id => byId.TryGetValue(id, out var e) && e.Manifest?.DisplayName != null
+                ? e.Manifest.DisplayName
+                : id,
+            cfg.ConflictRecords
         );
+
+        // Fill the installed (manual) version from the live scan so the UI can
+        // compare it against the remembered Workshop version.
+        foreach (var c in plan.Conflicts)
+        {
+            if (c.ModId != null && byId.TryGetValue(c.ModId, out var info))
+                c.InstalledVersion = info.Manifest?.Version;
+        }
 
         if (subscriptions.Count == 0 && (plan.Orphans.Count > 0 || plan.StaleEntries.Count > 0))
         {
@@ -153,7 +182,7 @@ public static class WorkshopSyncService
         PatchHelper.Log(
             $"[Workshop] Sync plan: install={plan.ToInstall.Count} update={plan.ToUpdate.Count} "
                 + $"orphans={plan.Orphans.Count} staleEntries={plan.StaleEntries.Count} "
-                + $"skipped={plan.Skipped.Count}"
+                + $"skipped={plan.Skipped.Count} conflicts={plan.Conflicts.Count}"
         );
         return plan;
     }
@@ -164,11 +193,20 @@ public static class WorkshopSyncService
         IReadOnlyList<WorkshopItemDetails> subscriptions,
         IEnumerable<ModConfigEntry> localEntries,
         ISet<string> installedFolderIds,
-        Func<string, string> displayNameResolver = null
+        Func<string, string> displayNameResolver = null,
+        IReadOnlyList<WorkshopConflictEntry> conflicts = null
     )
     {
         var plan = new WorkshopSyncPlan();
         displayNameResolver ??= id => id;
+
+        var conflictByPfid = new Dictionary<ulong, WorkshopConflictEntry>();
+        if (conflicts != null)
+        {
+            foreach (var c in conflicts)
+                if (c != null && c.PublishedFileId != 0)
+                    conflictByPfid[c.PublishedFileId] = c;
+        }
 
         var subsById = new Dictionary<ulong, WorkshopItemDetails>();
         foreach (var s in subscriptions)
@@ -202,6 +240,28 @@ public static class WorkshopSyncService
 
             localByPfid.TryGetValue(sub.PublishedFileId, out var entry);
             bool folderPresent = entry != null && installedFolderIds.Contains(entry.Id);
+
+            // Known id-collision with an already-installed mod: don't re-download
+            // unless the item has been updated on Steam since we last saw it
+            // (time_updated advanced). Prevents the every-visit re-download loop
+            // for a subscribed item that can never be committed.
+            if (
+                (entry == null || !folderPresent)
+                && conflictByPfid.TryGetValue(sub.PublishedFileId, out var conf)
+                && conf.TimeUpdated >= sub.TimeUpdated
+            )
+            {
+                plan.Conflicts.Add(
+                    new WorkshopConflictItem
+                    {
+                        PublishedFileId = sub.PublishedFileId,
+                        ModId = conf.ModId,
+                        Title = sub.Title,
+                        WorkshopVersion = conf.WorkshopVersion,
+                    }
+                );
+                continue;
+            }
 
             if (entry == null || !folderPresent)
                 plan.ToInstall.Add(sub);
@@ -368,6 +428,8 @@ public static class WorkshopSyncService
         ct.ThrowIfCancellationRequested();
 
         var cfg = ModConfig.Load();
+        // Drop any remembered id-collision for this item so it doesn't linger.
+        cfg.ClearConflict(publishedFileId);
         var entry = cfg.Mods.FirstOrDefault(m =>
             m.IsWorkshop && m.PublishedFileId == publishedFileId
         );
@@ -376,15 +438,73 @@ public static class WorkshopSyncService
             PatchHelper.Log(
                 $"[Workshop] Unsubscribed {publishedFileId}; no local workshop entry to remove."
             );
+            cfg.Save();
             return true;
         }
 
         var mod = new WorkshopLocalMod { Id = entry.Id, PublishedFileId = publishedFileId };
         var result = new WorkshopSyncResult();
-        bool removed = RemoveWorkshopMod(cfg, mod, deleteFolder: true, result);
-        if (removed)
-            cfg.Save();
-        return removed;
+        RemoveWorkshopMod(cfg, mod, deleteFolder: true, result);
+        cfg.Save();
+        return true;
+    }
+
+    // Conflict resolution — "use the Workshop copy". The user has both a manual
+    // install and a subscription of the same mod id; this removes the manual
+    // copy/copies (a confirmed, destructive-to-the-manual-folder action) and
+    // installs the Workshop copy in their place, converting the mod to
+    // Workshop-managed. Guarded to Mods/ direct children with valid ids only.
+    public static async Task<WorkshopInstaller.WorkshopInstallResult> ResolveConflictUseWorkshopAsync(
+        SteamConnection conn,
+        ulong publishedFileId,
+        IProgress<DownloadProgress> progress = null,
+        CancellationToken ct = default
+    )
+    {
+        if (conn == null)
+            throw new ArgumentNullException(nameof(conn));
+
+        var details = await conn.GetPublishedFileDetailsAsync(new[] { publishedFileId })
+            .ConfigureAwait(false);
+        var item = details.FirstOrDefault(d =>
+            d.PublishedFileId == publishedFileId && !string.IsNullOrEmpty(d.Title)
+        );
+        if (item == null)
+            return new WorkshopInstaller.WorkshopInstallResult
+            {
+                Success = false,
+                Error = "Workshop item not found or inaccessible.",
+            };
+
+        var cfg = ModConfig.Load();
+        var conf = cfg.ConflictRecords.FirstOrDefault(c => c.PublishedFileId == publishedFileId);
+        var targetId = conf?.ModId;
+        if (targetId != null && IsValidId(targetId))
+        {
+            foreach (var m in ModScanner.Scan().Where(s => s.Id == targetId).ToList())
+            {
+                if (!AppPaths.IsDirectChildOfModsDir(m.TopLevelDir))
+                    continue;
+                try
+                {
+                    Directory.Delete(m.TopLevelDir, recursive: true);
+                    PatchHelper.Log(
+                        $"[Workshop] Conflict resolve: removed existing copy at {m.TopLevelDir}"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log($"[Workshop] Conflict resolve delete failed: {ex.Message}");
+                }
+            }
+            cfg.Remove(targetId); // drop the manual entry so the fresh install owns the id
+        }
+        cfg.ClearConflict(publishedFileId);
+        cfg.Save();
+
+        return await WorkshopInstaller
+            .DownloadAndInstallAsync(conn, item, progress, ct)
+            .ConfigureAwait(false);
     }
 
     // Guarded single-mod removal. Verifies the current config entry is source=workshop
