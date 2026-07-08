@@ -130,7 +130,16 @@ public static class LauncherPatches
                 ?? new SteamKit2CloudSaveStore(SavedAccountName, SavedRefreshToken);
             var wrappedStore = new CloudSaveStore(localStore, cloudStore);
 
-            __result = new SaveManager(wrappedStore);
+            // P1-3 (G8) — the 1-arg ctor delegates to the 2-arg one with the
+            // SAME store for both saveStore and localOnlyStore (decompile-
+            // confirmed identical in both the upstream mobile build and the
+            // installed PC build, v0.107.1), so settings.save was riding the
+            // cloud-wrapped store right alongside profile/prefs/progress/run.
+            // The game's own ConstructDefault always passes its plain local
+            // GodotFileIo as the second arg — SettingsSaveManager is the only
+            // consumer of that argument, so this makes mobile match PC:
+            // settings stay device-local, everything else keeps syncing.
+            __result = new SaveManager(wrappedStore, localStore);
             PatchHelper.Log("[Cloud] Created SaveManager with SteamKit2 cloud store");
             return false;
         }

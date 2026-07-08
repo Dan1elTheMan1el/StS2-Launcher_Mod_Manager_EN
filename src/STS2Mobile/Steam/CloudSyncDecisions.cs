@@ -112,6 +112,9 @@ public static class CloudSyncDecisions
         ICloudSaveStore cloud
     )
     {
+        // P1-1 (A1) — re-enumerate before deciding. See RefreshCloudCacheIfPossible.
+        RefreshCloudCacheIfPossible(cloud, nameof(DetermineAsync));
+
         await Issue7Diagnostics.AuditDecisionStateAsync(local, cloud, "DetermineAsync");
 
         bool anyLocal = false;
@@ -298,6 +301,13 @@ public static class CloudSyncDecisions
         ICloudSaveStore cloud
     )
     {
+        // P1-1 (A1) — re-enumerate before deciding. See RefreshCloudCacheIfPossible.
+        // This also covers the Save Manager "resolve one slot, re-show the
+        // list" loop (OpenSaveSyncDialogAsync) automatically — every re-entry
+        // calls DeterminePerProfileAsync again, so the just-applied change is
+        // always visible on the next pass without any extra plumbing there.
+        RefreshCloudCacheIfPossible(cloud, nameof(DeterminePerProfileAsync));
+
         await Issue7Diagnostics.AuditDecisionStateAsync(local, cloud, "DeterminePerProfileAsync");
 
         var results = new List<SyncDecisionResult>();
@@ -355,6 +365,43 @@ public static class CloudSyncDecisions
             UserDataPathProvider.IsRunningModded = wasModded;
         }
         return results;
+    }
+
+    // P1-1 (A1) — CloudFileCache loads once lazily on first access and
+    // (before this) was never refreshed again for the rest of the session.
+    // A KeepCloud pull, a PC-side upload, or anything else that changes the
+    // cloud side mid-session was invisible to later decisions, which kept
+    // comparing against the original boot-time snapshot — device-verified:
+    // a KeepCloud pull landed (raw=228298) but the launcher kept reporting
+    // the same false Conflict against a stale 217901-byte snapshot.
+    //
+    // Soft-cast: only SteamKit2CloudSaveStore exposes RefreshCache (it's not
+    // part of the game's ICloudSaveStore contract) — anything else just skips
+    // this, matching the previous (no-refresh) behavior. RefreshCache/
+    // SafeRefresh already fail open on their own (roll back to the prior
+    // snapshot rather than clearing it), but this is wrapped again here so a
+    // decision computation can never be blocked/aborted by a refresh problem
+    // — worst case, we fall through with whatever the cache already had.
+    //
+    // Deliberately NOT called from ManualPushAllAsync/mirror-delete paths —
+    // a freshly-visible cloud-side file created mid-session there (e.g. a PC
+    // current_run.save) could get mirror-deleted by the issue #31 logic
+    // before the user ever sees it (steam risk B1). Push keeps its existing
+    // WaitForCacheReadyAsync-only behavior.
+    private static void RefreshCloudCacheIfPossible(ICloudSaveStore cloud, string context)
+    {
+        if (cloud is not SteamKit2CloudSaveStore refreshable)
+            return;
+        try
+        {
+            refreshable.RefreshCache();
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"[Cloud] {context}: cache refresh failed, using existing cache: {ex.Message}"
+            );
+        }
     }
 
     // Holds the raw per-slot comparison a single (profile × modded) pair

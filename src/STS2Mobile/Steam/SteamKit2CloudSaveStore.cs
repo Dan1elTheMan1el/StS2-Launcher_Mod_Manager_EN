@@ -284,6 +284,17 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     public bool IsFilePersisted(string path) => _cache.IsFilePersisted(path);
 
+    // P1-1 (A1, device-verified) — re-enumerates cloud files, rolling back to
+    // the previous snapshot if the fresh enumerate fails (see CloudFileCache.
+    // SafeRefresh). Called at the start of CloudSyncDecisions.DetermineAsync/
+    // DeterminePerProfileAsync so a sync decision never compares against a
+    // stale boot-time snapshot when the cloud side changed mid-session (e.g.
+    // a KeepCloud pull earlier this session, or a PC-side upload since boot)
+    // — confirmed on device: a KeepCloud pull landed (raw=228298) but every
+    // later decision kept comparing against the 217901-byte boot snapshot,
+    // re-reporting the same false Conflict indefinitely.
+    public void RefreshCache() => _cache.SafeRefresh();
+
     // Set once the previous batch's write-queue lambda has fully run (i.e. only
     // meaningful to read AFTER Flush() has confirmed the queue drained — see
     // CloudSyncCoordinator.ManualPushAllAsync). Reflects whether every file in
@@ -428,8 +439,13 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     // Returns true once the file has actually landed (commit confirmed by
     // UploadFileAsync), false if every attempt failed — EndSaveBatch uses this
-    // to decide the batch's final batch_eresult (P0-1). Retry count/backoff
-    // unchanged from before; only the bool return is new.
+    // to decide the batch's final batch_eresult (P0-1). P1-4 (F2): also
+    // retries transient cancellation (same idle-timeout/EnsureConnected race
+    // the read side already retries — see CloudSyncDecisions.
+    // ReadCloudFileWithRetryAsync) using the same attempt/backoff frame as
+    // the existing TooManyPending retry below. Writes had no equivalent
+    // retry before — a write that lost this race was silently dropped as a
+    // hard failure with no second attempt.
     private bool UploadWithRetry(
         string path,
         byte[] bytes,
@@ -453,20 +469,51 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                 );
                 Thread.Sleep((attempt + 1) * 2000);
             }
+            catch (Exception ex) when (attempt < 2 && IsTransientCancellation(ex))
+            {
+                PatchHelper.Log(
+                    $"[Cloud] Upload for {CloudFileCache.CanonicalizePath(path)} hit transient "
+                        + $"cancellation (attempt {attempt + 1}/3): {ex.Message} — retrying..."
+                );
+                Thread.Sleep((attempt + 1) * 500);
+            }
             catch (Exception ex)
             {
                 PatchHelper.Log(
                     $"[Cloud] Upload failed for {CloudFileCache.CanonicalizePath(path)}: {ex.Message}"
                 );
+                // P1-4 (F3) — WriteFile already optimistically set this path's
+                // cache entry (size/mtime) BEFORE this upload ever ran. Since
+                // the upload never actually landed, that cached size is a
+                // guess, not a confirmed fact — mark it unpersisted so a
+                // future consumer of IsFilePersisted knows not to trust it.
+                _cache.ForgetFile(path);
                 return false;
             }
         }
         // Unreachable in practice — every path above either returns or, on the
-        // final attempt, falls to the catch(Exception) block above (its `when`
-        // guard requires attempt < 2, so attempt==2 always matches the second,
-        // unconditional catch). Kept for the compiler's definite-return rule.
+        // final attempt, falls to a catch(Exception) block above (both
+        // guarded branches require attempt < 2, so attempt==2 always falls to
+        // the final unconditional catch). Kept for the compiler's
+        // definite-return rule.
+        _cache.ForgetFile(path);
         return false;
     }
+
+    // The idle-timeout race manifests as an OperationCanceledException (or
+    // the TaskCanceledException subclass) bubbling out of SteamKit2's unified
+    // message job when the connection drops mid-request. Mirrors
+    // CloudSyncDecisions.IsTransientCancellation (read side) — duplicated
+    // rather than shared since it's a 3-line predicate and the two call sites
+    // are otherwise unrelated. Also checks InnerException: UploadFileAsync
+    // wraps a transient commit-RPC failure in a generic InvalidOperationException
+    // (see its own comment) so the outer "Cloud upload failed" message stays
+    // consistent for logging, but the original transient exception is kept as
+    // InnerException specifically so this check can still see it.
+    private static bool IsTransientCancellation(Exception ex) =>
+        ex is OperationCanceledException
+        || ex.Message.Contains("was canceled", StringComparison.OrdinalIgnoreCase)
+        || (ex.InnerException != null && IsTransientCancellation(ex.InnerException));
 
     private async Task UploadFileAsync(
         string path,
@@ -528,6 +575,11 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         }
 
         bool uploadSucceeded = false;
+        // P1-4 (F3) — set only when the commit RPC itself throws, so we can
+        // preserve it as the InnerException of the failure thrown below
+        // (UploadWithRetry's transient-cancellation check needs to see the
+        // real exception, not just the generic message it's wrapped in).
+        Exception commitFailure = null;
         try
         {
             foreach (var block in beginResult.block_requests)
@@ -583,16 +635,32 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                     .ConfigureAwait(false);
 
                 if (uploadSucceeded && !commitResult.file_committed)
+                {
+                    // P1-4 (F3) — this used to be logged and silently treated
+                    // as success: the HTTP blocks landed but Steam's own
+                    // commit step rejected the file, so nothing usable
+                    // actually exists at `path` server-side. Flip it so the
+                    // caller (UploadWithRetry → LastBatchHadFailures/
+                    // batch_eresult) sees a real failure instead of a lie.
                     PatchHelper.Log($"[Cloud] Commit returned file_committed=false for {path}");
+                    uploadSucceeded = false;
+                }
             }
             catch (Exception ex)
             {
+                // P1-4 (F3) — same reasoning: if the commit RPC itself never
+                // came back, we don't actually know Steam accepted the file.
+                // Treating this as success (previous behavior) could leave
+                // local/cloud silently out of sync while everything
+                // downstream believed the write landed.
                 PatchHelper.Log($"[Cloud] Commit failed for {path}: {ex.Message}");
+                uploadSucceeded = false;
+                commitFailure = ex;
             }
         }
 
         if (!uploadSucceeded)
-            throw new InvalidOperationException($"Cloud upload failed for {path}");
+            throw new InvalidOperationException($"Cloud upload failed for {path}", commitFailure);
 
         PatchHelper.Log($"[Cloud] Wrote {bytes.Length} bytes to {path} (compressed={compressed})");
     }

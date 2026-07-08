@@ -142,6 +142,39 @@ public class CloudFileCache
         EnsureLoaded();
     }
 
+    // P1-1 (A1) — rollback-safe variant for callers that must never let a
+    // failed re-enumerate leave the cache emptier than it was before calling
+    // this. Refresh() above unconditionally clears _files before retrying —
+    // if that retry then fails (transient network hiccup), every
+    // FileExists/GetFileSize call for the rest of the caller's pass would see
+    // an EMPTY cache instead of just stale data, which could misfire a sync
+    // decision into "cloud has nothing, push everything". This snapshots the
+    // current (good) state first and rolls back to it if the fresh enumerate
+    // doesn't actually succeed, so a failed refresh degrades to exactly the
+    // pre-refresh stale-snapshot behavior instead of an empty one.
+    public void SafeRefresh()
+    {
+        if (!_loaded)
+        {
+            // Nothing successfully loaded yet this session — nothing to
+            // protect, just attempt a normal load.
+            EnsureLoaded();
+            return;
+        }
+
+        var previousFiles = new Dictionary<string, CloudFileInfo>(_files);
+        Refresh();
+
+        if (!_loaded)
+        {
+            PatchHelper.Log("[Cloud] Refresh failed, restoring previous cache snapshot");
+            _files.Clear();
+            foreach (var kvp in previousFiles)
+                _files[kvp.Key] = kvp.Value;
+            _loaded = true;
+        }
+    }
+
     // Drives EnumerateUserFiles on a worker thread and waits for either success
     // or MaxRetries exhaustion. The launcher gates SaveManager construction on
     // this — when it returns false, the launcher falls back to a local-only

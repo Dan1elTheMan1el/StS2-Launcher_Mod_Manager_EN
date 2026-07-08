@@ -820,7 +820,7 @@ public class LauncherController
                 {
                     PatchHelper.Log($"[AtlasWipe] failed to write marker: {ex.Message}");
                 }
-                LauncherModel.GetGodotApp()?.Call("restartApp");
+                FlushCloudThenRestart();
             },
             onCancelled: null
         );
@@ -1094,14 +1094,43 @@ public class LauncherController
         try
         {
             var timer = _view.RootControl.GetTree().CreateTimer(2.0);
-            timer.Timeout += () => LauncherModel.GetGodotApp()?.Call("restartApp");
+            timer.Timeout += FlushCloudThenRestart;
         }
         catch (Exception ex)
         {
             // Timer path unavailable (e.g. detached tree) — restart immediately.
             PatchHelper.Log($"[Launcher] Update-restart timer failed, restarting now: {ex.Message}");
-            LauncherModel.GetGodotApp()?.Call("restartApp");
+            FlushCloudThenRestart();
         }
+    }
+
+    // P1-2 (G7) — restartApp bypasses NGame.Quit entirely (that's where
+    // QuitPrefix's own Flush(300s) lives), so any cloud writes still queued
+    // at these points (AtlasWipe confirm, update-restart) would be silently
+    // dropped — the cloud stays stale until the NEXT session's handshake
+    // self-heals it, and in the meantime another device could pull the stale
+    // copy. Flush is a blocking wait (Thread.Sleep polling under the hood),
+    // so it must run off the main thread — every call site above is a
+    // main-thread button/timer callback. Fail-open: the restart proceeds
+    // whether Flush drains in time or times out — nothing here is worth
+    // blocking a restart over, since the local save is intact either way and
+    // will resync on next launch.
+    private void FlushCloudThenRestart()
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                bool drained = SteamKit2CloudSaveStore.Instance?.Flush(60_000) ?? true;
+                if (!drained)
+                    PatchHelper.Log("[Cloud] Pre-restart flush timed out, restarting anyway");
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[Cloud] Pre-restart flush failed, restarting anyway: {ex.Message}");
+            }
+            _runOnMainThread(() => LauncherModel.GetGodotApp()?.Call("restartApp"));
+        });
     }
 
     // Issue #45: Play 버튼 라벨은 NeedsRestartAfterBranchSwitch 가 set 이면 한국어
