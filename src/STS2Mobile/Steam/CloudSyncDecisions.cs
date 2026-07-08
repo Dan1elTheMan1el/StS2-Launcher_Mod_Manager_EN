@@ -408,6 +408,12 @@ public static class CloudSyncDecisions
         bool profileDiffers = false;
         bool readUnverified = false;
 
+        // Set when the byte-compare below successfully reads the cloud
+        // progress.save content — reused for the summary build further down
+        // so a same-size slot doesn't download progress.save twice (once to
+        // compare, once to build the summary shown in the picker/dialog).
+        string prefetchedCloudProgressContent = null;
+
         // Compare progress.save first (cheap size check, byte comparison only
         // when sizes match).
         if (localSize > 0 && cloudSize > 0)
@@ -423,6 +429,7 @@ public static class CloudSyncDecisions
                     var localContent = local.ReadFile(path);
                     var cloudContent = await ReadCloudFileWithRetryAsync(cloud, path)
                         .ConfigureAwait(false);
+                    prefetchedCloudProgressContent = cloudContent;
                     if (localContent != cloudContent)
                         profileDiffers = true;
                 }
@@ -479,7 +486,14 @@ public static class CloudSyncDecisions
         }
         if (cloudSize > 0 || cloudRunSize > 0)
         {
-            cloudSummary = await BuildCloudSummaryAsync(cloud, path, cloudSize, runPath, cloudRunSize);
+            cloudSummary = await BuildCloudSummaryAsync(
+                cloud,
+                path,
+                cloudSize,
+                runPath,
+                cloudRunSize,
+                prefetchedCloudProgressContent
+            );
             cloudSummary.ProfileNumber = profile;
             cloudSummary.IsModded = modded;
         }
@@ -558,7 +572,14 @@ public static class CloudSyncDecisions
         string progressPath,
         int progressSize,
         string runPath,
-        int runSize
+        int runSize,
+        // Set when EvaluateSlotAsync's byte-compare already downloaded this
+        // exact progress.save content (same-size slot, successful read) —
+        // reuse it here instead of downloading progress.save a second time
+        // just to build the summary. Null whenever no compare read happened
+        // or it failed, in which case this falls back to its own read exactly
+        // as before.
+        string prefetchedProgressContent = null
     )
     {
         SaveProgressSummary summary;
@@ -568,8 +589,9 @@ public static class CloudSyncDecisions
             DateTimeOffset progressMtime = DateTimeOffset.MinValue;
             if (progressSize > 0)
             {
-                progressContent = await ReadCloudFileWithRetryAsync(cloud, progressPath)
-                    .ConfigureAwait(false);
+                progressContent =
+                    prefetchedProgressContent
+                    ?? await ReadCloudFileWithRetryAsync(cloud, progressPath).ConfigureAwait(false);
                 progressMtime = cloud.GetLastModifiedTime(progressPath);
             }
             summary = SaveProgressSummary.FromContent(progressContent, progressSize, progressMtime);

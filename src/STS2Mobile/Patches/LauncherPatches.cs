@@ -310,13 +310,25 @@ public static class LauncherPatches
 
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
 
+        // Cached across loop iterations — DeterminePerProfileAsync downloads
+        // every non-identical-size cloud progress.save to compare it, so
+        // re-running it on every dialog close (Cancel/Unverified/Identical —
+        // nothing actually changed) was silently re-downloading several MB
+        // per tap. Only re-fetch after a resolution that actually applied a
+        // KeepLocal/KeepCloud (state may have genuinely changed); a Cancel or
+        // closing the picker reuses the same list.
+        List<SyncDecisionResult> slots = null;
+
         // Loop so resolving one slot returns the user to a refreshed profile
         // list — they can then inspect/resolve another slot in the same visit
         // instead of having to re-tap the Save Manager button each time.
         while (true)
         {
-            var slots = await CloudSyncDecisions.DeterminePerProfileAsync(localStore, cloudStore);
-            PatchHelper.Log($"[Cloud] Save Manager: {slots.Count} profile slot(s) with data");
+            if (slots == null)
+            {
+                slots = await CloudSyncDecisions.DeterminePerProfileAsync(localStore, cloudStore);
+                PatchHelper.Log($"[Cloud] Save Manager: {slots.Count} profile slot(s) with data");
+            }
 
             if (slots.Count == 0)
             {
@@ -353,7 +365,9 @@ public static class LauncherPatches
                 picked.LocalSummary,
                 picked.CloudSummary
             );
-            await HandleProfileConflictAsync(parent, localStore, cloudStore, picked);
+            bool applied = await HandleProfileConflictAsync(parent, localStore, cloudStore, picked);
+            if (applied)
+                slots = null; // State changed — force a fresh DeterminePerProfileAsync.
         }
     }
 
@@ -526,7 +540,12 @@ public static class LauncherPatches
     // never touched. The full-tree LocalBackupService snapshot is kept as-is
     // (issue #36 Part A backups are whole-tree by design; scoping the
     // *apply* is what protects the other profiles, not the backup).
-    private static async Task HandleProfileConflictAsync(
+    //
+    // Returns whether a KeepLocal/KeepCloud apply actually ran, so the Save
+    // Manager loop knows whether the profile-slot list needs a fresh
+    // DeterminePerProfileAsync (state changed) or can reuse its cached one
+    // (Cancel/no-action — nothing on either side moved).
+    private static async Task<bool> HandleProfileConflictAsync(
         Node gameNode,
         ISaveStore localStore,
         SteamKit2CloudSaveStore cloudStore,
@@ -584,7 +603,7 @@ public static class LauncherPatches
                     );
                     _cloudCacheReady = false;
                 }
-                break;
+                return true; // Apply ran (regardless of verify outcome) — state may have changed.
             case CloudConflictChoice.KeepCloud:
                 await ApplyChosenSideForSlotAsync(
                     localStore,
@@ -609,7 +628,7 @@ public static class LauncherPatches
                     );
                     _cloudCacheReady = false;
                 }
-                break;
+                return true; // Apply ran (regardless of verify outcome) — state may have changed.
             case CloudConflictChoice.Cancel:
                 // Same button-only semantics as HandleConflictAsync's Cancel
                 // branch: an already-in-sync slot (Identical — NoData can't
@@ -637,8 +656,9 @@ public static class LauncherPatches
                         "[Cloud] Profile slot conflict cancelled — falling back to local-only"
                     );
                 }
-                break;
+                return false; // No apply — nothing changed, caller reuses its cached slot list.
         }
+        return false;
     }
 
     // Blocks until queued cloud writes drain, then verifies the chosen side has
