@@ -7,6 +7,22 @@ using MegaCrit.Sts2.Core.Saves;
 
 namespace STS2Mobile.Steam;
 
+// P0-1 — honest outcome for a manual push/pull instead of the caller seeing
+// "complete" the instant the method returns while uploads are still queued.
+//   Success  — everything that should have moved, did.
+//   Failed   — the operation finished running, but at least one file didn't
+//              make it (per-file loop failure, or — Push only — the upload
+//              batch itself reported a failure: see SteamKit2CloudSaveStore.
+//              LastBatchHadFailures).
+//   TimedOut — Push only: the write queue never drained within the wait
+//              budget, so the fate of the in-flight/queued uploads is unknown.
+public enum CloudBatchOutcome
+{
+    Success,
+    Failed,
+    TimedOut,
+}
+
 // Stateless cloud sync coordinator: auto sync and manual push/pull.
 //
 // Issue #36 Part A redesign: per-sync victim backups were REMOVED from this class.
@@ -152,14 +168,30 @@ public static class CloudSyncCoordinator
         }
     }
 
-    // Returns Task (not async): the per-sync cloud backup loop that needed an await
-    // was removed in the Part A redesign, so the body is now fully synchronous.
-    public static Task ManualPushAllAsync(string accountName, string refreshToken)
+    // Returns Task<CloudBatchOutcome> (not async): the body is fully
+    // synchronous, including the post-EndSaveBatch Flush wait added for P0-1.
+    // This is only ever called from inside a Task.Run (LauncherController),
+    // so blocking here is the point — it's what turns EndSaveBatch's
+    // fire-and-forget enqueue into an honest, awaitable result instead of the
+    // previous "returns instantly, always says complete" lie.
+    public static Task<CloudBatchOutcome> ManualPushAllAsync(string accountName, string refreshToken)
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
         var cloudStore =
             SteamKit2CloudSaveStore.Instance
             ?? new SteamKit2CloudSaveStore(accountName, refreshToken);
+
+        // P0-1: force the cloud file cache to load now (if it hasn't already
+        // this session) BEFORE opening a new batch below. Cache-loading is
+        // what triggers the stale-upload-batch cleanup (see CloudFileCache.
+        // LoadFileList / CleanStaleUploadBatchIfAny). Pull gets this for free
+        // via GetSaveFilePaths(cloudStore) touching the cache first, but Push
+        // walks the LOCAL store for its path list and — when every local file
+        // is non-trivial in size — WriteFile's GuardB never touches the cache
+        // either. Without this, pressing Push as the very first cloud action
+        // of a fresh launcher session could open a new batch while a batch
+        // left dangling by a prior session's crash is still open server-side.
+        cloudStore.WaitForCacheReadyAsync(15_000).GetAwaiter().GetResult();
 
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
@@ -167,6 +199,7 @@ public static class CloudSyncCoordinator
         cloudStore.BeginSaveBatch();
         int count = 0;
         int deletedCloud = 0;
+        bool anyLoopFailure = false;
         foreach (var path in paths)
         {
             try
@@ -190,17 +223,50 @@ public static class CloudSyncCoordinator
             catch (Exception ex)
             {
                 PatchHelper.Log($"[Cloud] Push: failed for {path}: {ex.Message}");
+                anyLoopFailure = true;
             }
         }
         cloudStore.EndSaveBatch();
 
+        // P0-1: EndSaveBatch only enqueues the batch upload — without waiting
+        // for it to drain, "complete" below would still be the same lie the
+        // UI used to see. Flush blocks until the write queue (the batch
+        // upload plus any mirror-deletes queued above) finishes or the budget
+        // runs out; only once it reports drained can LastBatchHadFailures be
+        // trusted (see SteamKit2CloudSaveStore.Flush / EndSaveBatch).
+        bool drained = cloudStore.Flush(timeoutMs: 120_000);
+
+        CloudBatchOutcome outcome;
+        if (!drained)
+        {
+            outcome = CloudBatchOutcome.TimedOut;
+            PatchHelper.Log("[Cloud] Push: timed out waiting for upload queue to drain");
+        }
+        else if (anyLoopFailure || cloudStore.LastBatchHadFailures)
+        {
+            outcome = CloudBatchOutcome.Failed;
+        }
+        else
+        {
+            outcome = CloudBatchOutcome.Success;
+        }
+
         PatchHelper.Log(
-            $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files mirror-deleted"
+            $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files "
+                + $"mirror-deleted, outcome={outcome}"
         );
-        return Task.CompletedTask;
+        return Task.FromResult(outcome);
     }
 
-    public static async Task ManualPullAllAsync(string accountName, string refreshToken)
+    // Unlike Push, Pull has no batch/write-queue involved — every download and
+    // local write below is already awaited in-line, so by the time this
+    // method returns everything has genuinely finished (no TimedOut case).
+    // The only honesty gap was the return value never reflecting per-file
+    // failures — fixed by tracking anyFailure below.
+    public static async Task<CloudBatchOutcome> ManualPullAllAsync(
+        string accountName,
+        string refreshToken
+    )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
         var cloudStore =
@@ -213,6 +279,7 @@ public static class CloudSyncCoordinator
         int downloaded = 0;
         int skipped = 0;
         int deletedLocal = 0;
+        bool anyFailure = false;
         foreach (var path in paths)
         {
             try
@@ -266,18 +333,23 @@ public static class CloudSyncCoordinator
                         PatchHelper.Log(
                             $"[Cloud] Pull: stale-cache delete failed for {path}: {delEx.Message}"
                         );
+                        anyFailure = true;
                     }
                 }
                 else
                 {
                     PatchHelper.Log($"[Cloud] Pull: failed for {path}: {ex.Message}");
+                    anyFailure = true;
                 }
             }
         }
 
+        var outcome = anyFailure ? CloudBatchOutcome.Failed : CloudBatchOutcome.Success;
         PatchHelper.Log(
-            $"[Cloud] Pull complete: {downloaded} downloaded, {skipped} not in cloud, {deletedLocal} local files mirror-deleted"
+            $"[Cloud] Pull complete: {downloaded} downloaded, {skipped} not in cloud, "
+                + $"{deletedLocal} local files mirror-deleted, outcome={outcome}"
         );
+        return outcome;
     }
 
     public static List<string> GetSaveFilePaths(ISaveStore store)

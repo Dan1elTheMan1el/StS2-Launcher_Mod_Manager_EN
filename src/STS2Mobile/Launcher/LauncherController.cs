@@ -973,11 +973,23 @@ public class LauncherController
                 {
                     try
                     {
-                        await CloudSyncCoordinator.ManualPushAllAsync(
+                        var outcome = await CloudSyncCoordinator.ManualPushAllAsync(
                             LauncherPatches.SavedAccountName,
                             LauncherPatches.SavedRefreshToken
                         );
-                        _runOnMainThread(() => _view.AppendLog("Push complete."));
+                        _runOnMainThread(() =>
+                            _view.AppendLog(
+                                outcome switch
+                                {
+                                    CloudBatchOutcome.Success => "Push complete.",
+                                    CloudBatchOutcome.TimedOut =>
+                                        "Push timed out — some saves may not have finished uploading. Check your connection and try again.",
+                                    CloudBatchOutcome.Failed =>
+                                        "Push finished with errors — some saves may not have uploaded. Check the log.",
+                                    _ => "Push finished.",
+                                }
+                            )
+                        );
                     }
                     catch (Exception ex)
                     {
@@ -1012,11 +1024,21 @@ public class LauncherController
                 {
                     try
                     {
-                        await CloudSyncCoordinator.ManualPullAllAsync(
+                        var outcome = await CloudSyncCoordinator.ManualPullAllAsync(
                             LauncherPatches.SavedAccountName,
                             LauncherPatches.SavedRefreshToken
                         );
-                        _runOnMainThread(() => _view.AppendLog("Pull complete."));
+                        _runOnMainThread(() =>
+                            _view.AppendLog(
+                                outcome switch
+                                {
+                                    CloudBatchOutcome.Success => "Pull complete.",
+                                    CloudBatchOutcome.Failed =>
+                                        "Pull finished with errors — some saves may not have downloaded. Check the log.",
+                                    _ => "Pull finished.",
+                                }
+                            )
+                        );
                     }
                     catch (Exception ex)
                     {

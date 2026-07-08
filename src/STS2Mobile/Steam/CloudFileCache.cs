@@ -20,6 +20,11 @@ public class CloudFileCache
     private DateTimeOffset _nextRetryTime = DateTimeOffset.MinValue;
     private readonly object _loadLock = new();
 
+    // P0-1 — guards CleanStaleUploadBatchIfAny so it only ever runs once per
+    // instance (i.e. once per app session), even though LoadFileList itself
+    // can run again later (Refresh()) or be retried on failure.
+    private bool _staleBatchCleanupAttempted;
+
     public CloudFileCache(SteamConnection connection)
     {
         _connection = connection;
@@ -239,6 +244,57 @@ public class CloudFileCache
         }
 
         PatchHelper.Log($"[Cloud] Enumerated {_files.Count} cloud files");
+
+        // P0-1 — this is the first confirmed-successful cloud RPC of the
+        // session (connection is up, logged on, and just proved it works), so
+        // it's the safest point to also check for a batch left open by a
+        // prior session that died mid-upload. See PendingUploadBatch for why.
+        CleanStaleUploadBatchIfAny();
+    }
+
+    // Best-effort, once per session: if a marker from PendingUploadBatch.Mark
+    // survived (previous session ended before EndSaveBatch's finally could
+    // call CompleteAppUploadBatchBlocking), close that batch now with a
+    // failure eresult so Steam stops treating it as still-pending. Whether
+    // this RPC succeeds or fails, the marker is cleared either way — retrying
+    // forever every session on a batch Steam may have already expired
+    // server-side would be pointless, and the whole point of this path is
+    // fail-open cleanup, not a guaranteed-delivery mechanism.
+    private void CleanStaleUploadBatchIfAny()
+    {
+        if (_staleBatchCleanupAttempted)
+            return;
+        _staleBatchCleanupAttempted = true;
+
+        if (!PendingUploadBatch.TryRead(out var staleBatchId))
+            return;
+
+        try
+        {
+            _connection
+                .SendCloud<CCloud_CompleteAppUploadBatch_Request, CCloud_CompleteAppUploadBatch_Response>(
+                    "CompleteAppUploadBatchBlocking",
+                    new CCloud_CompleteAppUploadBatch_Request
+                    {
+                        appid = AppId,
+                        batch_id = staleBatchId,
+                        batch_eresult = (uint)SteamKit2.EResult.Fail,
+                    }
+                )
+                .GetAwaiter()
+                .GetResult();
+            PatchHelper.Log($"[Cloud] Cleaned stale upload batch {staleBatchId}");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"[Cloud] Stale upload batch {staleBatchId} cleanup failed (will not retry): {ex.Message}"
+            );
+        }
+        finally
+        {
+            PendingUploadBatch.Clear();
+        }
     }
 
     private class CloudFileInfo
