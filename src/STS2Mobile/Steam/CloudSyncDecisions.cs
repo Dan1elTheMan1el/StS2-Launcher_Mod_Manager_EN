@@ -32,6 +32,16 @@ public enum SyncDecision
     // Both sides have content and every profile matches byte-for-byte. Treat as
     // "everything is fine" — fall through to the existing AutoSync logic.
     Identical,
+
+    // Both sides have progress.save of the SAME size, but the cloud byte-read
+    // needed to confirm a match kept failing (even after retry) — typically a
+    // Steam connection idle-timeout racing with EnsureConnected (see
+    // SteamConnection.cs). We genuinely don't know whether this profile
+    // matches or differs. MUST NOT be treated as Identical (would silently
+    // skip a real conflict) or Conflict (would let the user pick a side based
+    // on data we never actually compared) — no destructive choice is offered
+    // for this state; the caller just informs the user and lets them retry.
+    Unverified,
 }
 
 public class SyncDecisionResult
@@ -107,6 +117,7 @@ public static class CloudSyncDecisions
         bool anyLocal = false;
         bool anyCloud = false;
         bool anyDiff = false;
+        bool anyUnverified = false;
 
         SaveProgressSummary aggregateLocal = null;
         SaveProgressSummary aggregateCloud = null;
@@ -124,6 +135,8 @@ public static class CloudSyncDecisions
         SaveProgressSummary firstDiffCloud = null;
         SaveProgressSummary firstRunLocal = null;
         SaveProgressSummary firstRunCloud = null;
+        SaveProgressSummary firstUnverifiedLocal = null;
+        SaveProgressSummary firstUnverifiedCloud = null;
         int diffSlots = 0;
 
         var wasModded = UserDataPathProvider.IsRunningModded;
@@ -143,6 +156,8 @@ public static class CloudSyncDecisions
                         anyCloud = true;
                     if (slot.Differs)
                         anyDiff = true;
+                    if (slot.ReadUnverified)
+                        anyUnverified = true;
 
                     // Aggregate summaries: build a per-profile summary so we
                     // can pick the most-relevant one to render. Priority:
@@ -161,6 +176,23 @@ public static class CloudSyncDecisions
                                 IsModded = modded,
                             };
                         firstDiffCloud ??=
+                            slot.CloudSummary
+                            ?? new SaveProgressSummary
+                            {
+                                ProfileNumber = profile,
+                                IsModded = modded,
+                            };
+                    }
+                    if (slot.ReadUnverified)
+                    {
+                        firstUnverifiedLocal ??=
+                            slot.LocalSummary
+                            ?? new SaveProgressSummary
+                            {
+                                ProfileNumber = profile,
+                                IsModded = modded,
+                            };
+                        firstUnverifiedCloud ??=
                             slot.CloudSummary
                             ?? new SaveProgressSummary
                             {
@@ -199,6 +231,7 @@ public static class CloudSyncDecisions
         if (Issue7Diagnostics.Enabled)
             PatchHelper.Log(
                 $"[Diag-i7] DetermineAsync result: anyLocal={anyLocal} anyCloud={anyCloud} anyDiff={anyDiff} "
+                    + $"anyUnverified={anyUnverified} "
                     + $"summarySource={(firstDiffLocal != null ? "diff" : firstRunLocal != null ? "run" : "first-nonempty")}"
             );
 
@@ -225,6 +258,20 @@ public static class CloudSyncDecisions
                 LocalSummary = resolvedLocal,
                 CloudSummary = resolvedCloud,
                 DiffSlotCount = diffSlots,
+            };
+
+        // No confirmed diff anywhere, but at least one profile's byte-compare
+        // never actually completed (transient cloud read failure). Returning
+        // Identical here would be a lie — we never verified this profile — and
+        // Identical falls straight through to auto-apply in ResolveSyncDecisionAsync.
+        // Surface Unverified instead so the caller skips auto-apply this round
+        // and simply retries on the next launch/visit.
+        if (anyUnverified)
+            return new SyncDecisionResult
+            {
+                Decision = SyncDecision.Unverified,
+                LocalSummary = firstUnverifiedLocal,
+                CloudSummary = firstUnverifiedCloud,
             };
 
         // Identical: still attach summaries so the Save Manager button can
@@ -280,6 +327,13 @@ public static class CloudSyncDecisions
                         decision = SyncDecision.MobileOnly;
                     else if (!slot.HasLocal && slot.HasCloud)
                         decision = SyncDecision.CloudOnly;
+                    else if (slot.ReadUnverified)
+                        // Both sides have progress.save but we couldn't confirm
+                        // whether it matches — never surface this as Conflict
+                        // (would offer a destructive KeepLocal/KeepCloud choice
+                        // based on data we never actually compared) or Identical
+                        // (would hide a possible real conflict).
+                        decision = SyncDecision.Unverified;
                     else
                         decision = slot.Differs ? SyncDecision.Conflict : SyncDecision.Identical;
 
@@ -311,6 +365,14 @@ public static class CloudSyncDecisions
         public bool HasLocal;
         public bool HasCloud;
         public bool Differs;
+
+        // Set when the progress.save byte-compare below could not complete —
+        // both sides have the same cached size but the cloud content read
+        // kept failing (even after ReadCloudFileWithRetryAsync's retry). We
+        // never actually learned whether the profiles match, so callers must
+        // not fold this into Differs (false Conflict) or leave it as a silent
+        // Identical (false "everything matches").
+        public bool ReadUnverified;
         public SaveProgressSummary LocalSummary;
         public SaveProgressSummary CloudSummary;
     }
@@ -344,6 +406,7 @@ public static class CloudSyncDecisions
         bool hasCloud = cloudSize > 0 || cloudRunSize > 0;
 
         bool profileDiffers = false;
+        bool readUnverified = false;
 
         // Compare progress.save first (cheap size check, byte comparison only
         // when sizes match).
@@ -358,16 +421,23 @@ public static class CloudSyncDecisions
                 try
                 {
                     var localContent = local.ReadFile(path);
-                    var cloudContent = await cloud.ReadFileAsync(path).ConfigureAwait(false);
+                    var cloudContent = await ReadCloudFileWithRetryAsync(cloud, path)
+                        .ConfigureAwait(false);
                     if (localContent != cloudContent)
                         profileDiffers = true;
                 }
                 catch (Exception ex)
                 {
+                    // Do NOT set profileDiffers here — sizes match, so we have
+                    // no evidence these actually differ. Claiming "diff" on a
+                    // failed read is what causes a false Conflict (and, if the
+                    // user picks KeepLocal, a silent overwrite of an
+                    // identical-or-newer cloud copy). Mark unverified instead;
+                    // the caller keeps this out of both Conflict and Identical.
                     PatchHelper.Log(
-                        $"[Cloud] Decision: read failed for {path}, treating as diff: {ex.Message}"
+                        $"[Cloud] Decision: read unverified for {path}, not treating as diff: {ex.Message}"
                     );
-                    profileDiffers = true;
+                    readUnverified = true;
                 }
             }
         }
@@ -419,6 +489,7 @@ public static class CloudSyncDecisions
             HasLocal = hasLocal,
             HasCloud = hasCloud,
             Differs = profileDiffers,
+            ReadUnverified = readUnverified,
             LocalSummary = localSummary,
             CloudSummary = cloudSummary,
         };
@@ -497,22 +568,36 @@ public static class CloudSyncDecisions
             DateTimeOffset progressMtime = DateTimeOffset.MinValue;
             if (progressSize > 0)
             {
-                progressContent = await cloud.ReadFileAsync(progressPath).ConfigureAwait(false);
+                progressContent = await ReadCloudFileWithRetryAsync(cloud, progressPath)
+                    .ConfigureAwait(false);
                 progressMtime = cloud.GetLastModifiedTime(progressPath);
             }
             summary = SaveProgressSummary.FromContent(progressContent, progressSize, progressMtime);
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Cloud] Decision: cloud progress read failed: {ex.Message}");
-            summary = new SaveProgressSummary();
+            // Don't collapse this to an empty (RawSize=0) summary — the cache
+            // already told us this file is progressSize bytes, we just failed
+            // to fetch its content. Reporting RawSize=0 here is exactly what
+            // used to render as "Steam Cloud 비어있음", which is false and (if
+            // acted on) would push local over a cloud copy we never read.
+            // FromContent with empty content + the real cached size produces a
+            // ParseSucceeded=false summary that IsEmpty correctly reports as
+            // non-empty, distinguishing "couldn't verify" from "genuinely empty".
+            PatchHelper.Log(
+                $"[Cloud] Decision: cloud progress read unverified, falling back to cached size: {ex.Message}"
+            );
+            var mtime =
+                progressSize > 0 ? cloud.GetLastModifiedTime(progressPath) : DateTimeOffset.MinValue;
+            summary = SaveProgressSummary.FromContent(string.Empty, progressSize, mtime);
         }
 
         if (runSize > 0)
         {
             try
             {
-                var runContent = await cloud.ReadFileAsync(runPath).ConfigureAwait(false);
+                var runContent = await ReadCloudFileWithRetryAsync(cloud, runPath)
+                    .ConfigureAwait(false);
                 var runMtime = cloud.GetLastModifiedTime(runPath);
                 summary.MergeCurrentRun(runContent, runSize, runMtime);
             }
@@ -523,4 +608,53 @@ public static class CloudSyncDecisions
         }
         return summary;
     }
+
+    // Wraps a single cloud file read with a bounded retry against the
+    // transient cancellation SteamConnection can throw when its idle-timeout
+    // disconnect races EnsureConnected's "already Connected, skip reconnect"
+    // fast path (see SteamConnection.cs — EnsureConnected is checked before
+    // SendMessage is issued, but the idle Timer can tear the socket down in
+    // between). SendCloud already calls EnsureConnected on every attempt, so a
+    // plain retry after a short delay is enough to let the connection recover
+    // — no separate "force reconnect" call needed.
+    //
+    // Any exception that survives every attempt (transient or not) is
+    // rethrown as-is; callers must NOT treat that as "file differs" or "file
+    // empty" — see the Unverified handling in EvaluateSlotAsync / BuildCloudSummaryAsync.
+    private static async Task<string> ReadCloudFileWithRetryAsync(
+        ICloudSaveStore cloud,
+        string path,
+        int maxAttempts = 3
+    )
+    {
+        // Unbounded `for(;;)` by design: every iteration either returns (success)
+        // or, once attempt reaches maxAttempts, the `when` guard below stops
+        // matching and the exception propagates out of the method directly —
+        // so the loop itself never "runs out" and falls through.
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var content = await cloud.ReadFileAsync(path).ConfigureAwait(false);
+                if (attempt > 1)
+                    PatchHelper.Log($"[Cloud] Read for {path} succeeded on retry {attempt}");
+                return content;
+            }
+            catch (Exception ex) when (attempt < maxAttempts && IsTransientCancellation(ex))
+            {
+                PatchHelper.Log(
+                    $"[Cloud] Read for {path} failed (attempt {attempt}/{maxAttempts}, transient): "
+                        + $"{ex.Message} — retrying..."
+                );
+                await Task.Delay(attempt * 500).ConfigureAwait(false);
+            }
+        }
+    }
+
+    // The idle-timeout race manifests as an OperationCanceledException (or the
+    // TaskCanceledException subclass) bubbling out of SteamKit2's unified
+    // message job when the connection drops mid-request.
+    private static bool IsTransientCancellation(Exception ex) =>
+        ex is OperationCanceledException
+        || ex.Message.Contains("was canceled", StringComparison.OrdinalIgnoreCase);
 }

@@ -145,6 +145,7 @@ public class ProfilePickerDialog : ColorRect
             SyncDecision.Conflict => ("충돌", new Color(0.85f, 0.4f, 0.3f)),
             SyncDecision.MobileOnly => ("로컬만", new Color(0.4f, 0.6f, 0.85f)),
             SyncDecision.CloudOnly => ("클라우드만", new Color(0.75f, 0.6f, 0.25f)),
+            SyncDecision.Unverified => ("확인 불가", new Color(0.6f, 0.6f, 0.6f)),
             _ => ("—", new Color(0.6f, 0.6f, 0.6f)),
         };
         var badge = new PanelContainer();
@@ -175,6 +176,7 @@ public class ProfilePickerDialog : ColorRect
                 $"동기화됨 · {slot.LocalSummary.FormatSize()} · {slot.LocalSummary.FormatPlaytime()}",
             SyncDecision.Conflict =>
                 $"로컬 {slot.LocalSummary.FormatSize()} vs Cloud {slot.CloudSummary.FormatSize()}",
+            SyncDecision.Unverified => "일시적으로 클라우드를 확인하지 못함 · 다시 시도해 주세요",
             _ => "",
         };
     }

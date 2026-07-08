@@ -394,6 +394,20 @@ public static class LauncherPatches
                 // side. Surfacing the choice removes both risk and surprise.
                 await HandleConflictAsync(gameNode, localStore, cloudStore, result, overlay);
                 return;
+
+            case SyncDecision.Unverified:
+                // Couldn't confirm whether this profile matches the cloud copy
+                // (transient read failure). Do nothing here — no dialog, no
+                // handshake-match snapshot, and _cloudCacheReady is left
+                // untouched (cloud sync stays active for the session; the
+                // game's own per-file AutoSync path does its own real-time
+                // compare later and isn't affected by this stale decision).
+                // We simply defer this profile's first-PLAY check to the next
+                // handshake rather than guessing a direction.
+                PatchHelper.Log(
+                    "[Cloud] Sync decision unverified — deferring this profile's check, no auto-apply"
+                );
+                return;
         }
     }
 
@@ -602,11 +616,18 @@ public static class LauncherPatches
                 // reach here, empty slots aren't listed) closing is a no-op,
                 // but backing out of a real per-slot conflict/one-sided slot
                 // still falls back to local-only for the session so the game
-                // doesn't proceed with an unresolved decision live.
-                if (slot.Decision == SyncDecision.Identical)
+                // doesn't proceed with an unresolved decision live. Unverified
+                // is also purely informational here — the dialog never offered
+                // KeepLocal/KeepCloud (see CloudConflictDialog), so closing it
+                // isn't "backing out of a choice"; the Save Manager loop simply
+                // re-checks this slot the next time the profile list is opened.
+                if (
+                    slot.Decision == SyncDecision.Identical
+                    || slot.Decision == SyncDecision.Unverified
+                )
                 {
                     PatchHelper.Log(
-                        "[Cloud] Profile slot dialog closed (already in sync — no action)"
+                        $"[Cloud] Profile slot dialog closed (decision={slot.Decision} — no action)"
                     );
                 }
                 else

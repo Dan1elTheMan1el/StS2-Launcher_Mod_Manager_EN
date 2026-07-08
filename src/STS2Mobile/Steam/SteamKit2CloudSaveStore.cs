@@ -132,6 +132,16 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
             return;
         }
 
+        // Issue #36 Part C — content-integrity guard, same funnel, same
+        // fail-safe shape as Part B above: a truncated/corrupt-but-non-empty
+        // save (Part B only catches empty) must never reach the cloud either.
+        // Also runs on the raw pre-compression bytes, before _cache.Set/enqueue.
+        if (CloudWriteGuard.ShouldBlockCorruptWrite(canonPath, bytes, out var corruptReason))
+        {
+            CloudWriteGuard.NotifyBlocked(canonPath, corruptReason);
+            return;
+        }
+
         var truncatedNow = DateTimeOffset.FromUnixTimeSeconds(
             DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         );
