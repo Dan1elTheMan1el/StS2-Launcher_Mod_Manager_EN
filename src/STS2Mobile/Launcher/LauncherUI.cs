@@ -194,7 +194,21 @@ public class LauncherUI : Control
 
     public override void _Notification(int what)
     {
-        if (what == NotificationWMGoBackRequest && _controller is { IsModManagerOpen: true })
+        if (what != NotificationWMGoBackRequest)
+            return;
+
+        // Android convention: if the soft keyboard is up, Back dismisses it first
+        // rather than navigating. Without this, tapping Back while typing in the
+        // Workshop search box fell straight through to the Mod-Hub-close handler,
+        // yanking the user out of the Mod Hub mid-search.
+        if (DisplayServer.VirtualKeyboardGetHeight() > 0)
+        {
+            GetViewport()?.GuiReleaseFocus();
+            DisplayServer.VirtualKeyboardHide();
+            return;
+        }
+
+        if (_controller is { IsModManagerOpen: true })
             _controller.OnModManagerBackPressed();
     }
 }

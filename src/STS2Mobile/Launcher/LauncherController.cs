@@ -341,6 +341,30 @@ public class LauncherController
 
     public void OnModManagerBackPressed()
     {
+        // Leaving the Mod Hub tears down the download queue's session, cancelling
+        // any in-flight Workshop download. Warn first so the user doesn't lose a
+        // download to a stray Back press.
+        if (_view.ModManager.HasActiveDownload)
+        {
+            _view.ShowConfirmation(
+                "A Workshop download is still in progress. Leaving the Mod Manager will "
+                    + "cancel it. Leave anyway?",
+                onConfirmed: () =>
+                {
+                    _view.ModManager.CancelDownloads();
+                    CloseModManager();
+                },
+                onCancelled: null,
+                okLabel: "Leave",
+                cancelLabel: "Stay"
+            );
+            return;
+        }
+        CloseModManager();
+    }
+
+    private void CloseModManager()
+    {
         PatchHelper.Log(
             $"[Mods] Back pressed (launchStageShown={_launchStageShown}, sessionState={_model.SessionState})"
         );

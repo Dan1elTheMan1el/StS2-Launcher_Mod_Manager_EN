@@ -217,6 +217,11 @@ public class LauncherView
     {
         Actions.SetSyncBusy(busy);
         ModManagerButton.Disabled = busy;
+        // Issue #58: the Mod Hub entry button (MOD MANAGER) was the one button the
+        // cloud-op freeze missed. Lock it too so the user can't open the Mod Hub
+        // (and start Workshop downloads that also touch external storage) while a
+        // cloud save sync is mid-flight.
+        ModsButton.Disabled = busy;
     }
 
     public void SetStatus(string text) => _statusLabel.Text = text;
@@ -252,7 +257,14 @@ public class LauncherView
     public void UpdateKeyboardOffset()
     {
         var kbHeight = DisplayServer.VirtualKeyboardGetHeight();
-        if (kbHeight > 0)
+
+        // The full-screen Mod Hub already keeps its focused field (the Workshop
+        // search box) near the top, above the keyboard. Lifting the whole panel up
+        // by the keyboard height then pushes that field — and the tab bar — off the
+        // top of the screen, so the user can't see what they're typing. Keep the
+        // panel pinned while the Mod Hub is open; the main launcher (compact,
+        // centered) still lifts so its lower fields clear the keyboard.
+        if (kbHeight > 0 && !ModManager.Visible)
         {
             var windowSize = DisplayServer.WindowGetSize();
             var vpSize = _parent.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1920, 1080);

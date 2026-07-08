@@ -161,6 +161,23 @@ public class ModManagerSection : VBoxContainer
     // itself (it may not exist yet on the fast/ReadyToLaunch path).
     public void Configure(LauncherModel model) => _model = model;
 
+    // True while the Workshop download queue has queued/in-flight items. Used by
+    // the Back handler to warn before leaving (leaving cancels the download).
+    public bool HasActiveDownload
+    {
+        get
+        {
+            lock (_queueLock)
+                return _queue?.IsBusy == true;
+        }
+    }
+
+    public void CancelDownloads()
+    {
+        lock (_queueLock)
+            _queue?.CancelAll();
+    }
+
     // Called by LauncherView.ShowModManager() every time the hub is opened.
     // Re-activates whichever tab is currently selected (LOCAL always rescans;
     // WORKSHOP/SUBSCRIBED/DOWNLOADS re-check the session and refresh).
