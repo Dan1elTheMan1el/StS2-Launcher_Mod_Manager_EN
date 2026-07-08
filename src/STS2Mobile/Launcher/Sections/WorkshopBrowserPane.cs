@@ -315,11 +315,33 @@ public class WorkshopBrowserPane : VBoxContainer
         var card = new WorkshopBrowseCard(item, _scale, badge, subscribed);
         card.SubscribeRequested += () => _ = Task.Run(() => OnSubscribeAsync(item.PublishedFileId));
         card.UnsubscribeRequested += () => _ = Task.Run(() => OnUnsubscribeAsync(item.PublishedFileId));
+        card.DetailRequested += () => ShowBrowseDetail(item);
         _resultsList.AddChild(card);
         _cardsByPfid[item.PublishedFileId] = card;
 
         if (!string.IsNullOrEmpty(item.PreviewUrl))
             _ = Task.Run(() => LoadThumbnailAsync(item.PublishedFileId, item.PreviewUrl));
+    }
+
+    private void ShowBrowseDetail(WorkshopItemDetails item)
+    {
+        var subtitle = $"{item.Subscriptions} subscriber(s)";
+        var facts = new System.Collections.Generic.List<(string, string)>
+        {
+            ("Size", STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize)),
+            ("Rating", $"{item.VoteScore * 100f:F0}%"),
+            ("Workshop id", item.PublishedFileId.ToString()),
+            ("Tags", item.Tags != null && item.Tags.Count > 0 ? string.Join(", ", item.Tags) : null),
+        };
+        var dialog = new ModDetailDialog(
+            item.Title,
+            subtitle,
+            null,
+            item.Description,
+            facts,
+            _scale
+        );
+        GetTree()?.Root?.AddChild(dialog);
     }
 
     private async Task LoadThumbnailAsync(ulong pfid, string previewUrl)

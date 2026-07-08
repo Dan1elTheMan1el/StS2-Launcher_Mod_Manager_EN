@@ -331,8 +331,10 @@ public class ModManagerSection : VBoxContainer
             )
                 warning = $"Requires game {info.Manifest.MinGameVersion}+";
 
-            var row = new ModListRow(info, _scale, versionWarning: warning);
-            row.RemovePressed += () => OnRowRemovePressed(info);
+            var row = new ModListRow(info, _scale);
+            var capturedInfo = info;
+            var capturedWarning = warning;
+            row.DetailRequested += () => ShowLocalDetail(capturedInfo, capturedWarning, removable: true);
             _listContainer.AddChild(row);
         }
 
@@ -345,9 +347,48 @@ public class ModManagerSection : VBoxContainer
                 Manifest = manifest,
                 ReadmeSnippet = null,
             };
-            var row = new ModListRow(info, _scale, removable: false, badge: "Unmanaged — root files");
+            var row = new ModListRow(info, _scale, badge: "Unmanaged — root files");
+            var capturedInfo = info;
+            row.DetailRequested += () => ShowLocalDetail(capturedInfo, null, removable: false);
             _listContainer.AddChild(row);
         }
+    }
+
+    // Full detail page for a local mod, opened by tapping its row.
+    private void ShowLocalDetail(ModEntryInfo info, string warning, bool removable)
+    {
+        var m = info.Manifest;
+        var subtitle = string.Join(
+            " · ",
+            new[]
+            {
+                string.IsNullOrWhiteSpace(m.Author) ? null : "by " + m.Author,
+                string.IsNullOrWhiteSpace(m.Version) ? null : "v" + m.Version,
+            }.Where(s => s != null)
+        );
+
+        var body = m.Description ?? "";
+        if (!string.IsNullOrWhiteSpace(info.ReadmeSnippet))
+            body = (body.Length > 0 ? body + "\n\n" : "") + "README: " + info.ReadmeSnippet;
+
+        var facts = new List<(string, string)>
+        {
+            ("Min game version", m.MinGameVersion),
+            ("Path", info.Path),
+        };
+
+        var dialog = new ModDetailDialog(
+            m.DisplayName,
+            subtitle,
+            warning,
+            body,
+            facts,
+            _scale,
+            actionLabel: removable ? "Remove Mod" : null,
+            actionCallback: removable ? () => OnRowRemovePressed(info) : null,
+            actionDanger: true
+        );
+        GetTree()?.Root?.AddChild(dialog);
     }
 
     // Root-level "*.json" manifests directly under Mods/ (not inside a folder) are

@@ -14,6 +14,7 @@ public class WorkshopBrowseCard : PanelContainer
 {
     public event Action SubscribeRequested;
     public event Action UnsubscribeRequested;
+    public event Action DetailRequested;
 
     public ulong PublishedFileId { get; }
 
@@ -27,6 +28,7 @@ public class WorkshopBrowseCard : PanelContainer
     {
         _scale = scale;
         PublishedFileId = item.PublishedFileId;
+        MouseFilter = MouseFilterEnum.Stop;
 
         var bg = new StyleBoxFlat();
         bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
@@ -36,24 +38,28 @@ public class WorkshopBrowseCard : PanelContainer
 
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
+        row.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(row);
 
         _thumb = new TextureRect();
         _thumb.CustomMinimumSize = new Vector2((int)(96 * scale), (int)(54 * scale));
         _thumb.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
         _thumb.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+        _thumb.MouseFilter = MouseFilterEnum.Ignore;
         var thumbBg = new StyleBoxFlat();
         thumbBg.BgColor = new Color(0.28f, 0.28f, 0.32f);
         thumbBg.SetCornerRadiusAll((int)(3 * scale));
         var thumbPanel = new PanelContainer();
         thumbPanel.AddThemeStyleboxOverride("panel", thumbBg);
         thumbPanel.CustomMinimumSize = new Vector2((int)(96 * scale), (int)(54 * scale));
+        thumbPanel.MouseFilter = MouseFilterEnum.Ignore;
         thumbPanel.AddChild(_thumb);
         row.AddChild(thumbPanel);
 
         var info = new VBoxContainer();
         info.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         info.AddThemeConstantOverride("separation", (int)(2 * scale));
+        info.MouseFilter = MouseFilterEnum.Ignore;
         row.AddChild(info);
 
         var titleLabel = new StyledLabel(item.Title, scale, fontSize: 14, align: HorizontalAlignment.Left);
@@ -80,6 +86,19 @@ public class WorkshopBrowseCard : PanelContainer
                 SubscribeRequested?.Invoke();
         };
         row.AddChild(_actionButton);
+
+        // Tapping the card body (not the action button) opens the detail page.
+        GuiInput += ev =>
+        {
+            if (
+                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                or InputEventScreenTouch { Pressed: true }
+            )
+            {
+                DetailRequested?.Invoke();
+                AcceptEvent();
+            }
+        };
 
         ApplyStatus(badge, subscribed);
     }

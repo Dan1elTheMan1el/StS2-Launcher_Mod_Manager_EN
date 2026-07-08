@@ -100,13 +100,36 @@ public class WorkshopSubscribedPane : VBoxContainer
             return;
         }
 
+        var toDownload = plan.ToInstall.Concat(plan.ToUpdate).ToList();
         if (_queue != null)
         {
-            foreach (var item in plan.ToInstall.Concat(plan.ToUpdate))
+            foreach (var item in toDownload)
                 _queue.Enqueue(item);
         }
         _updateAvailablePfids = new HashSet<ulong>(plan.ToUpdate.Select(i => i.PublishedFileId));
         _conflicts = plan.Conflicts;
+
+        // Tell the user what auto-download just started (issue #58): a scrollable
+        // list of the new/updated mods, queued to the Downloads tab.
+        if (toDownload.Count > 0)
+        {
+            var titles = toDownload
+                .Select(i => string.IsNullOrEmpty(i.Title) ? i.PublishedFileId.ToString() : i.Title)
+                .ToList();
+            int newCount = plan.ToInstall.Count;
+            int updCount = plan.ToUpdate.Count;
+            var header =
+                updCount == 0
+                    ? $"{newCount} new Workshop mod(s) detected — downloading:"
+                    : newCount == 0
+                        ? $"{updCount} Workshop mod update(s) detected — downloading:"
+                        : $"{newCount} new + {updCount} updated Workshop mod(s) — downloading:";
+            RunOnMain(() =>
+            {
+                var dialog = new WorkshopUpdateDialog(header, titles, _scale);
+                GetTree()?.Root?.AddChild(dialog);
+            });
+        }
 
         if (plan.StaleEntries.Count > 0)
         {
@@ -222,7 +245,9 @@ public class WorkshopSubscribedPane : VBoxContainer
             var version = info?.Manifest?.Version;
             var row = new SubscribedModRow(title, version, status, isError, _scale);
             var capturedEntry = entry;
+            var capturedInfo = info;
             row.UnsubscribePressed += () => OnUnsubscribePressed(capturedEntry);
+            row.DetailRequested += () => ShowSubscribedDetail(capturedEntry, capturedInfo);
             _list.AddChild(row);
         }
 
@@ -351,6 +376,45 @@ public class WorkshopSubscribedPane : VBoxContainer
             () => _ = Task.Run(() => DoUnsubscribeAsync(entry)),
             null
         );
+
+    private void ShowSubscribedDetail(ModConfigEntry entry, ModEntryInfo info)
+    {
+        var m = info?.Manifest;
+        var title = m?.DisplayName ?? entry.Id;
+        var subtitle = string.Join(
+            " · ",
+            new[]
+            {
+                string.IsNullOrWhiteSpace(m?.Author) ? null : "by " + m.Author,
+                string.IsNullOrWhiteSpace(m?.Version) ? null : "v" + m.Version,
+            }.Where(s => s != null)
+        );
+
+        var body = m?.Description ?? "";
+        if (!string.IsNullOrWhiteSpace(info?.ReadmeSnippet))
+            body = (body.Length > 0 ? body + "\n\n" : "") + "README: " + info.ReadmeSnippet;
+
+        var facts = new List<(string, string)>
+        {
+            ("Source", "Steam Workshop"),
+            ("Workshop id", entry.PublishedFileId.ToString()),
+            ("Min game version", m?.MinGameVersion),
+            ("Path", info?.Path),
+        };
+
+        var dialog = new ModDetailDialog(
+            title,
+            subtitle,
+            null,
+            body,
+            facts,
+            _scale,
+            actionLabel: "Unsubscribe",
+            actionCallback: () => OnUnsubscribePressed(entry),
+            actionDanger: true
+        );
+        GetTree()?.Root?.AddChild(dialog);
+    }
 
     private async Task DoUnsubscribeAsync(ModConfigEntry entry)
     {
