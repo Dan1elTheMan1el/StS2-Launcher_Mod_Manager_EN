@@ -31,7 +31,7 @@
 
 ### 운영 안내 / 미확정 (기기 재현 필요)
 
-- **G4/H2 — UnifiedSavePath aliasing: 메커니즘 확정(모드 디컴파일), 유령슬롯 인스턴스만 미확정.** 모드가 GetProfileDir를 `profile{id}`로 강제(+ IsRunningModded getter/setter 모두 false 강제) → 모드 활성 중 **런처의 modded 토글이 무력화**되고 modded/unmodded가 물리 수렴. 타이밍: pre-PLAY 핸드셰이크는 모드 로드 전(6슬롯 정상), 게임+백그라운드 sync는 모드 로드 후(수렴) — **모드-로드 경계의 시간적 aliasing**이 교차오염 뿌리. 위험 조합 = UnifiedSavePath 기기 ↔ **표준-modded** 기기(↔unmodded 기기는 오히려 안전). **사용자 폰에 이 모드 설치·퍼블릭에서 활성 확인됨** — 유령 profile2(1550B)의 유력 원인. 구조 fix 곤란(모드가 의도적 붕괴) → 운영 안내: 전 동기화 기기 일괄 적용 또는 미사용. 인스턴스 확정법(재연결 시): Issue36 백업 스냅샷(`Saves/auto/*_conflict/`)에서 profile2/saves/progress.save pull → 모드 ModelId 포함 여부 grep.
+- **G4/H2 — UnifiedSavePath aliasing: 메커니즘 확정(모드 디컴파일), 유령슬롯 인스턴스만 미확정.** 모드가 GetProfileDir를 `profile{id}`로 강제(+ IsRunningModded getter/setter 모두 false 강제) → 모드 활성 중 **런처의 modded 토글이 무력화**되고 modded/unmodded가 물리 수렴. 타이밍: pre-PLAY 핸드셰이크는 모드 로드 전(6슬롯 정상), 게임+백그라운드 sync는 모드 로드 후(수렴) — **모드-로드 경계의 시간적 aliasing**이 교차오염 뿌리. 위험 조합 = UnifiedSavePath 기기 ↔ **표준-modded** 기기(↔unmodded 기기는 오히려 안전). 구조 fix 곤란(모드가 의도적 붕괴) → 운영 안내: 전 동기화 기기 일괄 적용 또는 미사용. **[2026-07-08 인스턴스 판정 완료]** 백업 스냅샷(20260708_214027)에서 유령 profile2(1550B) 내용 검사: schema v21·플레이 0초·바닐라 아이언클래드 스타터 6장+Burning Blood뿐, **모드 ID 흔적 0** — UnifiedSavePath 유출이 아니라 **단순히 한 번 열어본 빈 프로필 2**로 판정(무해, 정리 불필요). H2 메커니즘 자체(디컴파일 확정)는 모드 재설치 시에만 유효한 운영 안내로 유지.
 - steam B1(mirror-delete 오발), A1 파괴 서브케이스, quota 초과 EResult 실측 — device-test-qa 재현 항목.
 - Steam Cloud 파일당 크기 한도/time_stamp 단위 — 1차 자료 없음, 관측 로깅 권고.
 
