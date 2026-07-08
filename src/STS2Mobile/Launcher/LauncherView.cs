@@ -173,6 +173,19 @@ public class LauncherView
 
     private readonly float _scale;
 
+    // View-level helper so callers lock every button that could race a cloud
+    // or local-save operation with one call. ModManagerButton (SAVE MANAGER)
+    // lives here in LauncherView, not inside ActionSection, so
+    // Actions.SetSyncBusy alone can't reach it — a device log showed exactly
+    // that gap: the user re-tapped SAVE MANAGER while its own KeepCloud apply
+    // was still mid-file-pull, since only ActionSection's own buttons were
+    // being disabled.
+    public void SetCloudOpBusy(bool busy)
+    {
+        Actions.SetSyncBusy(busy);
+        ModManagerButton.Disabled = busy;
+    }
+
     public void SetStatus(string text) => _statusLabel.Text = text;
 
     public void AppendLog(string msg) => Log.AppendLog(msg);

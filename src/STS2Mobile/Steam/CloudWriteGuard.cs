@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Godot;
 using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
@@ -26,6 +27,9 @@ public static class CloudWriteGuard
 {
     // Dedicated tag so device-test-qa can grep a deterministic PASS/FAIL signal.
     private const string Tag = "[Issue36-GuardB]";
+
+    // Part C — content-integrity gate, same funnel, checked right after GuardB.
+    private const string CorruptTag = "[Issue36-GuardC]";
 
     // Bytes at or below this count are treated as "empty" even if non-zero — a
     // couple of stray bytes (e.g. "{}", a stray newline) can't be a real save and
@@ -118,6 +122,85 @@ public static class CloudWriteGuard
             PatchHelper.Log($"{Tag} ERROR {canonPath}, allowing write: {ex.Message}");
             return false;
         }
+    }
+
+    // Part C — content-integrity gate. GuardB above only catches the empty-write
+    // case; a truncated/corrupted-but-non-empty write (e.g. a partial JSON body
+    // from an interrupted local write) sails straight through it and would
+    // silently propagate to the cloud, destroying the last good copy. Called
+    // from WriteFile right after ShouldBlockWrite, on the same raw (pre-
+    // compression) bytes — BLOCKING here leaves the cache/upload queue
+    // untouched, same as GuardB, so the existing cloud copy is preserved.
+    //
+    // Rule (conservative, no false positives on real saves):
+    //   - Content is trivially small (≤ EmptyByteThreshold)          → ALLOW,
+    //     always — that's GuardB's call to make (it decides whether an empty
+    //     write is safe based on what's currently in the cloud), not this
+    //     gate's. GuardB can and does let a ≤2-byte write through when the
+    //     cloud side is already empty/absent; "{}" or 0 bytes will never
+    //     parse as a real save either, so without this check GuardC would
+    //     wrongly BLOCK a write GuardB just decided was harmless.
+    //   - Path isn't a known save file (doesn't end in .save/.run)  → ALLOW
+    //     (never block a type we don't recognize — the whole guard's job is
+    //     to catch corrupt *saves*, not to police every cloud write).
+    //   - Save path AND bytes parse as valid JSON                   → ALLOW.
+    //   - Save path AND bytes fail to parse as JSON                 → BLOCK
+    //     (definitively truncated/corrupt — a valid save is never invalid JSON).
+    public static bool ShouldBlockCorruptWrite(string canonPath, byte[] bytes, out string reason)
+    {
+        reason = null;
+        try
+        {
+            if (bytes.Length <= EmptyByteThreshold)
+            {
+                PatchHelper.Log($"{CorruptTag} ALLOW(trivial-size) {canonPath}: {bytes.Length}B");
+                return false;
+            }
+
+            if (!IsJsonSavePath(canonPath))
+            {
+                PatchHelper.Log($"{CorruptTag} ALLOW(non-save-path) {canonPath}");
+                return false;
+            }
+
+            try
+            {
+                // Full parse, not a first/last-byte heuristic — definitive at the
+                // size these files run (largest observed ~217KB, once per write).
+                using var doc = JsonDocument.Parse(bytes);
+                PatchHelper.Log($"{CorruptTag} ALLOW(json-ok) {canonPath}: {bytes.Length}B");
+                return false;
+            }
+            catch (JsonException ex)
+            {
+                reason = "세이브 파일이 불완전(손상)해 클라우드 업로드를 보류했습니다.";
+                PatchHelper.Log(
+                    $"{CorruptTag} BLOCK(corrupt-json) {canonPath}: {bytes.Length}B parse실패: {ex.Message}"
+                );
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Same fail-open contract as GuardB — never let the guard itself
+            // break the save path.
+            PatchHelper.Log($"{CorruptTag} ERROR {canonPath}, allowing write: {ex.Message}");
+            return false;
+        }
+    }
+
+    // Cheap, path-only recognition of the JSON save files this store ever
+    // writes (progress/current_run/current_run_mp/prefs/settings.save, and
+    // history/*.run) — see SavePathCompat and CloudSyncCoordinator for the
+    // full set of paths that funnel through here. Deliberately just an
+    // extension check rather than an exhaustive name whitelist so any future
+    // save file type is covered without an edit here, while non-save cloud
+    // writes are never second-guessed by a JSON parser they were never meant
+    // to satisfy.
+    private static bool IsJsonSavePath(string canonPath)
+    {
+        var lower = canonPath.ToLowerInvariant();
+        return lower.EndsWith(".save") || lower.EndsWith(".run");
     }
 
     // Fires a user-facing notification for a blocked write. Throttled per path so

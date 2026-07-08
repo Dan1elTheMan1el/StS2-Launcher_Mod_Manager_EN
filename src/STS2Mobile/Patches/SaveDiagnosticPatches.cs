@@ -31,6 +31,17 @@ public static class SaveDiagnosticPatches
         AppPaths.ExternalRoot + "/.repro_issue36_emptywrite";
     private static bool _reproFired;
 
+    // P0-2 (경량판) — set once this session if progress.save's load underwent
+    // ANY form of recovery (lossy scavenge, or a hard failure that falls back
+    // to ProgressState.CreateDefault() + an immediate re-save). Session-scoped
+    // and sticky: only ever flips false→true (see LogLoadResult), never
+    // resets, so a later clean load of a different profile doesn't mask an
+    // earlier recovery. Consumed by STS2Mobile.Steam.ProgressRecoveryGate to
+    // gate a subsequent progress.save cloud push behind a one-time user
+    // confirmation instead of silently letting a possibly-degraded load
+    // overwrite a good cloud copy.
+    internal static bool ProgressLoadRecovered;
+
     public static void Apply(Harmony harmony)
     {
         PatchHelper.Patch(
@@ -235,6 +246,56 @@ public static class SaveDiagnosticPatches
                     + $"Success={success}, HasData={saveData != null}, "
                     + $"Error={error ?? "none"}"
             );
+
+            // P0-2 (경량판) — classify Status against MegaCrit.Sts2.Core.Saves.
+            // ReadSaveStatus, decompiled from sts2.dll v0.108.0 (not guessed):
+            // Success, JsonParseError, FileNotFound, FileEmpty, MigrationFailed,
+            // MissingSchemaVersion, FutureVersion, VersionTooOld,
+            // MigrationRequired, JsonRepaired, RecoveredWithDataLoss,
+            // FileAccessError, Unrecoverable, ValidationFailed.
+            //
+            // ReadSaveResult<T>.Success is true only for Success/MigrationRequired/
+            // JsonRepaired/RecoveredWithDataLoss — everything else is Success=false,
+            // which makes ProgressSaveManager.LoadProgress() fall back to
+            // ProgressState.CreateDefault() + an IMMEDIATE SaveProgress() call
+            // (confirmed via decompile of both types). Flagged below EXCEPT:
+            //   Success           — clean load, nothing recovered.
+            //   FileNotFound      — no file ever existed (fresh profile); the
+            //                       CreateDefault this ALSO triggers is normal
+            //                       first-time init, not a recovery from real data.
+            //   MigrationRequired — file intact, cleanly forward-migrated to a
+            //                       newer schema (the designed, lossless upgrade
+            //                       path — LoadWithAggressiveRecovery's own log
+            //                       text confirms no data was discarded).
+            // Everything flagged below represents "a real file existed and
+            // something went wrong with it" — either a lossy scavenge
+            // (RecoveredWithDataLoss/JsonRepaired) or an outright failed
+            // recovery that's about to get overwritten with a blank default
+            // (the rest). String-compared (not cast to the enum type) to
+            // match this file's existing reflection-only, version-resilient
+            // approach — an unrecognized/renamed value simply fails open
+            // (flag stays whatever it already was).
+            var statusName = status?.ToString();
+            bool thisLoadRecovered = statusName switch
+            {
+                "RecoveredWithDataLoss" => true,
+                "JsonRepaired" => true,
+                "JsonParseError" => true,
+                "FileEmpty" => true,
+                "MigrationFailed" => true,
+                "MissingSchemaVersion" => true,
+                "FutureVersion" => true,
+                "VersionTooOld" => true,
+                "FileAccessError" => true,
+                "Unrecoverable" => true,
+                "ValidationFailed" => true,
+                _ => false,
+            };
+            if (thisLoadRecovered)
+            {
+                ProgressLoadRecovered = true;
+                PatchHelper.Log($"[Diag] ProgressLoadRecovered=true (Status={statusName})");
+            }
         }
         catch (Exception ex)
         {

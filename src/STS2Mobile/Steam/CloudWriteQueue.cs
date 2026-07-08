@@ -34,10 +34,16 @@ public class CloudWriteQueue : IDisposable
     // while a write was still in flight and verification then read stale
     // server state (issue #4 verification: rc4 KeepLocal verify saw cloud=811
     // because cloud upload hadn't landed yet 3s after Flush returned).
-    public void Flush(int timeoutMs = 5000)
+    //
+    // P0-1: returns true once everything queued (including whatever was
+    // in-flight when Flush was called) has actually finished running, false
+    // on timeout. Callers that need to know whether a push/pull genuinely
+    // completed (not just "we stopped waiting") must check this instead of
+    // assuming a return means success — see CloudSyncCoordinator.ManualPushAllAsync.
+    public bool Flush(int timeoutMs = 5000)
     {
         if (_queue.Count == 0 && !_actionInProgress)
-            return;
+            return true;
 
         PatchHelper.Log(
             $"[Cloud] Flushing {_queue.Count} queued + {(_actionInProgress ? "1 in-flight" : "0 in-flight")} writes..."
@@ -48,12 +54,16 @@ public class CloudWriteQueue : IDisposable
             Thread.Sleep(100);
 
         if (_queue.Count > 0 || _actionInProgress)
+        {
             PatchHelper.Log(
                 $"[Cloud] Flush timed out, {_queue.Count} queued + "
                     + $"{(_actionInProgress ? "1 in-flight" : "0 in-flight")} remaining"
             );
-        else
-            PatchHelper.Log("[Cloud] Flush completed");
+            return false;
+        }
+
+        PatchHelper.Log("[Cloud] Flush completed");
+        return true;
     }
 
     public void Dispose()
