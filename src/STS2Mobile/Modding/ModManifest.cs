@@ -1,9 +1,64 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace STS2Mobile.Modding;
+
+// One entry of a manifest's "dependencies" array. The game's current schema
+// (decompiled MegaCrit.Sts2.Core.Modding.ModDependency) is an object
+// {"id": ..., "min_version": ...}; the old style was a plain id string, which the
+// game still accepts with a deprecation error. Both shapes must parse here — a
+// manifest must never become invisible to the launcher because of its
+// dependencies shape.
+public class ModDependencyRef
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; }
+
+    [JsonPropertyName("min_version")]
+    public string MinVersion { get; set; }
+}
+
+// Tolerant reader for "dependencies": accepts string entries (old style) and
+// object entries (current game schema) in the same array.
+public class ModDependencyListConverter : JsonConverter<List<ModDependencyRef>>
+{
+    public override List<ModDependencyRef> Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options
+    )
+    {
+        var result = new List<ModDependencyRef>();
+        if (reader.TokenType != JsonTokenType.StartArray)
+        {
+            reader.Skip();
+            return result;
+        }
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType == JsonTokenType.String)
+                result.Add(new ModDependencyRef { Id = reader.GetString() });
+            else if (reader.TokenType == JsonTokenType.StartObject)
+                result.Add(
+                    JsonSerializer.Deserialize<ModDependencyRef>(ref reader, options)
+                        ?? new ModDependencyRef()
+                );
+            else
+                reader.Skip();
+        }
+        return result;
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        List<ModDependencyRef> value,
+        JsonSerializerOptions options
+    ) => JsonSerializer.Serialize(writer, value, options);
+}
 
 // POCO matching the StS2 mod_manifest.json schema. Parsed directly by the launcher
 // for UI; the game's own ModManager reads the same file independently at game start.
@@ -36,7 +91,8 @@ public class ModManifest
     public bool HasDll { get; set; }
 
     [JsonPropertyName("dependencies")]
-    public List<string> Dependencies { get; set; } = new();
+    [JsonConverter(typeof(ModDependencyListConverter))]
+    public List<ModDependencyRef> Dependencies { get; set; } = new();
 
     [JsonPropertyName("affects_gameplay")]
     public bool AffectsGameplay { get; set; }
