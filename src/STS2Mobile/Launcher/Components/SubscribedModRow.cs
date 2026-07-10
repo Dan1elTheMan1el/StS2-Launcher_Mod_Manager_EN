@@ -13,8 +13,6 @@ public class SubscribedModRow : PanelContainer
 
     public SubscribedModRow(string title, string version, string status, bool statusIsError, float scale)
     {
-        MouseFilter = MouseFilterEnum.Stop;
-
         var bg = new StyleBoxFlat();
         bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
         bg.SetCornerRadiusAll((int)(4 * scale));
@@ -54,17 +52,8 @@ public class SubscribedModRow : PanelContainer
         unsubButton.Pressed += () => UnsubscribePressed?.Invoke();
         row.AddChild(unsubButton);
 
-        // Tapping the row body (not the button) opens the detail page.
-        GuiInput += ev =>
-        {
-            if (
-                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
-                or InputEventScreenTouch { Pressed: true }
-            )
-            {
-                DetailRequested?.Invoke();
-                AcceptEvent();
-            }
-        };
+        // Tapping the row body (not the button) opens the detail page; drags
+        // fall through to the ScrollContainer so the list stays scrollable.
+        TapGesture.Attach(this, () => DetailRequested?.Invoke());
     }
 }

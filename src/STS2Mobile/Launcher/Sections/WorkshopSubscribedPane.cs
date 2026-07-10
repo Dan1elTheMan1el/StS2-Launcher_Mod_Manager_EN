@@ -32,6 +32,7 @@ public class WorkshopSubscribedPane : VBoxContainer
     private List<WorkshopConflictItem> _conflicts = new();
     private Func<Task<(bool ok, SteamConnection conn)>> _ensureSession;
     private bool _loggedIn;
+    private long _lastSyncTick;
 
     public WorkshopSubscribedPane(float scale)
     {
@@ -82,6 +83,19 @@ public class WorkshopSubscribedPane : VBoxContainer
         }
         _connection = conn;
 
+        // Debounce full re-syncs on rapid tab flapping: within 15s of the last
+        // successful sync, just re-render current state (registry + queue). The
+        // idle-suspended connection stays warm, so a later real sync is cheap.
+        if (System.Environment.TickCount64 - _lastSyncTick < 15_000)
+        {
+            RunOnMain(() =>
+            {
+                SetStatus("Synced.", InfoColor);
+                RenderList();
+            });
+            return;
+        }
+
         RunOnMain(() => SetStatus("Syncing subscriptions...", InfoColor));
 
         WorkshopSyncPlan plan;
@@ -100,6 +114,7 @@ public class WorkshopSubscribedPane : VBoxContainer
             return;
         }
 
+        _lastSyncTick = System.Environment.TickCount64;
         var toDownload = plan.ToInstall.Concat(plan.ToUpdate).ToList();
         if (_queue != null)
         {
@@ -210,12 +225,57 @@ public class WorkshopSubscribedPane : VBoxContainer
         );
 
         var workshopMods = cfg.Mods.Where(m => m.IsWorkshop).OrderBy(m => m.Id, StringComparer.Ordinal).ToList();
-        if (workshopMods.Count == 0)
+
+        // Subscribed items still in flight (queued/downloading/failed) that have no
+        // registry entry yet — without these rows a fresh subscription is invisible
+        // here until its install completes (the original "BaseLib doesn't show"
+        // report).
+        var registryPfids = new HashSet<ulong>(workshopMods.Select(m => m.PublishedFileId));
+        var pending = queueByPfid
+            .Values.Where(e =>
+                !registryPfids.Contains(e.Item.PublishedFileId)
+                && e.State != WorkshopDownloadState.Completed
+            )
+            .OrderBy(e => e.Item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (workshopMods.Count == 0 && pending.Count == 0 && (_conflicts?.Count ?? 0) == 0)
         {
             var empty = new StyledLabel("No Workshop subscriptions installed.", _scale, fontSize: 12);
             empty.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             _list.AddChild(empty);
             return;
+        }
+
+        foreach (var q in pending)
+        {
+            string status;
+            bool isError = false;
+            switch (q.State)
+            {
+                case WorkshopDownloadState.Downloading:
+                    status = $"Downloading {q.ProgressPercent:F0}%";
+                    break;
+                case WorkshopDownloadState.Failed:
+                    status = $"Failed: {q.Error}";
+                    isError = true;
+                    break;
+                default:
+                    status = "Queued";
+                    break;
+            }
+
+            var item = q.Item;
+            var row = new SubscribedModRow(
+                string.IsNullOrEmpty(item.Title) ? item.PublishedFileId.ToString() : item.Title,
+                null,
+                status,
+                isError,
+                _scale
+            );
+            row.UnsubscribePressed += () => OnUnsubscribePfidPressed(item);
+            row.DetailRequested += () => ShowItemDetail(item);
+            _list.AddChild(row);
         }
 
         foreach (var entry in workshopMods)
@@ -345,16 +405,31 @@ public class WorkshopSubscribedPane : VBoxContainer
         RunOnMain(() => SetStatus($"Switching '{c.ModId}' to the Workshop version...", InfoColor));
         try
         {
-            await WorkshopSyncService
-                .ResolveConflictUseWorkshopAsync(_connection, c.PublishedFileId)
+            var (item, error) = await WorkshopSyncService
+                .PrepareUseWorkshopAsync(_connection, c.PublishedFileId)
                 .ConfigureAwait(false);
+            if (item == null)
+            {
+                RunOnMain(() => SetStatus($"Switch failed: {error}", WarnColor));
+                return;
+            }
+
+            // Download through the shared queue: progress shows in the Downloads
+            // tab and the per-item gate/dedup prevents the double-download race a
+            // direct download here used to cause.
+            _conflicts.RemoveAll(x => x.PublishedFileId == c.PublishedFileId);
+            if (_queue != null)
+                _queue.Enqueue(item);
+            else
+                await WorkshopInstaller
+                    .DownloadAndInstallAsync(_connection, item)
+                    .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             PatchHelper.Log($"[Workshop] Conflict resolve failed: {ex.Message}");
         }
-        if (_ensureSession != null)
-            await SyncAsync(_ensureSession).ConfigureAwait(false);
+        RunOnMain(RenderList);
     }
 
     // Compares dotted numeric versions ("0.2.0" vs "0.1.0"). Non-numeric segments
@@ -380,6 +455,49 @@ public class WorkshopSubscribedPane : VBoxContainer
             () => _ = Task.Run(() => DoUnsubscribeAsync(entry)),
             null
         );
+
+    // Unsubscribe for an in-flight (not yet installed) subscription row.
+    private void OnUnsubscribePfidPressed(WorkshopItemDetails item) =>
+        ConfirmationRequested?.Invoke(
+            $"Unsubscribe from '{item.Title}'?",
+            () => _ = Task.Run(async () =>
+            {
+                if (_connection == null)
+                    return;
+                try
+                {
+                    await WorkshopSyncService
+                        .UnsubscribeAndRemoveAsync(_connection, item.PublishedFileId)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log($"[Workshop] Unsubscribe failed: {ex.Message}");
+                }
+                RunOnMain(RenderList);
+            }),
+            null
+        );
+
+    // Detail page for an in-flight subscription (Workshop metadata only — nothing
+    // on disk yet).
+    private void ShowItemDetail(WorkshopItemDetails item)
+    {
+        var facts = new List<(string, string)>
+        {
+            ("Size", LauncherModel.FormatSize((long)item.FileSize)),
+            ("Workshop id", item.PublishedFileId.ToString()),
+        };
+        var dialog = new ModDetailDialog(
+            item.Title,
+            $"{item.Subscriptions} subscriber(s)",
+            null,
+            item.Description,
+            facts,
+            _scale
+        );
+        LauncherOverlay.Show(this, dialog);
+    }
 
     private void ShowSubscribedDetail(ModConfigEntry entry, ModEntryInfo info)
     {

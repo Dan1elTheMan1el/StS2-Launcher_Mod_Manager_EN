@@ -449,15 +449,16 @@ public static class WorkshopSyncService
         return true;
     }
 
-    // Conflict resolution — "use the Workshop copy". The user has both a manual
-    // install and a subscription of the same mod id; this removes the manual
-    // copy/copies (a confirmed, destructive-to-the-manual-folder action) and
-    // installs the Workshop copy in their place, converting the mod to
-    // Workshop-managed. Guarded to Mods/ direct children with valid ids only.
-    public static async Task<WorkshopInstaller.WorkshopInstallResult> ResolveConflictUseWorkshopAsync(
+    // Conflict resolution — "use the Workshop copy", step 1 of 2. The user has
+    // both a manual install and a subscription of the same mod id; this removes
+    // the manual copy/copies (a confirmed, destructive-to-the-manual-folder
+    // action) and clears the remembered conflict, then returns the item details.
+    // The CALLER downloads it — via the shared WorkshopDownloadQueue, so progress
+    // shows in the Downloads tab and the same item can't be downloaded twice
+    // concurrently. Guarded to Mods/ direct children with valid ids only.
+    public static async Task<(WorkshopItemDetails Item, string Error)> PrepareUseWorkshopAsync(
         SteamConnection conn,
         ulong publishedFileId,
-        IProgress<DownloadProgress> progress = null,
         CancellationToken ct = default
     )
     {
@@ -470,11 +471,8 @@ public static class WorkshopSyncService
             d.PublishedFileId == publishedFileId && !string.IsNullOrEmpty(d.Title)
         );
         if (item == null)
-            return new WorkshopInstaller.WorkshopInstallResult
-            {
-                Success = false,
-                Error = "Workshop item not found or inaccessible.",
-            };
+            return (null, "Workshop item not found or inaccessible.");
+        ct.ThrowIfCancellationRequested();
 
         var cfg = ModConfig.Load();
         var conf = cfg.ConflictRecords.FirstOrDefault(c => c.PublishedFileId == publishedFileId);
@@ -502,9 +500,7 @@ public static class WorkshopSyncService
         cfg.ClearConflict(publishedFileId);
         cfg.Save();
 
-        return await WorkshopInstaller
-            .DownloadAndInstallAsync(conn, item, progress, ct)
-            .ConfigureAwait(false);
+        return (item, null);
     }
 
     // Guarded single-mod removal. Verifies the current config entry is source=workshop

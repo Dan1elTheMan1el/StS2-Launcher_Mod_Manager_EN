@@ -19,7 +19,6 @@ public class ModListRow : PanelContainer
     public ModListRow(ModEntryInfo info, float scale, string badge = null)
     {
         ModId = info.Id;
-        MouseFilter = MouseFilterEnum.Stop;
 
         var bg = new StyleBoxFlat();
         bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
@@ -54,19 +53,9 @@ public class ModListRow : PanelContainer
         chevron.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
         topRow.AddChild(chevron);
 
-        GuiInput += OnGuiInput;
-    }
-
-    private void OnGuiInput(InputEvent ev)
-    {
-        if (
-            ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
-            or InputEventScreenTouch { Pressed: true }
-        )
-        {
-            DetailRequested?.Invoke();
-            AcceptEvent();
-        }
+        // Tap opens the detail page; drags fall through to the ScrollContainer
+        // (a Stop+AcceptEvent handler here was eating list scrolling).
+        TapGesture.Attach(this, () => DetailRequested?.Invoke());
     }
 
     private static string BuildTitle(ModEntryInfo info)

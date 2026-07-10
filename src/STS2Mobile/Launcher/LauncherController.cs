@@ -368,6 +368,8 @@ public class LauncherController
         PatchHelper.Log(
             $"[Mods] Back pressed (launchStageShown={_launchStageShown}, sessionState={_model.SessionState})"
         );
+        // Resume the Steam idle timeout suspended while the hub was open.
+        _view.ModManager.NotifyClosed();
         // Must hide mod manager first, otherwise UpdateUI's ModManager.Visible guard
         // refuses to redraw — that was making BACK a no-op.
         _view.HideModManager();

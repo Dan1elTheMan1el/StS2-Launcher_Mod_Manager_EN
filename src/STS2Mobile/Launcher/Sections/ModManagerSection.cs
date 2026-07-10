@@ -57,6 +57,7 @@ public class ModManagerSection : VBoxContainer
     private readonly object _queueLock = new();
     private int _activeTab = TabLocal;
     private bool _importInFlight;
+    private bool _idleSuspended;
 
     public ModManagerSection(float scale)
     {
@@ -237,6 +238,17 @@ public class ModManagerSection : VBoxContainer
         if (_model.SessionState != SessionState.LoggedIn || _model.Connection == null)
             return (false, null);
 
+        // Keep the connection warm while the Mod Hub is open. Without this the
+        // 30s idle timeout drops the session between tab switches, so every tab
+        // change reconnects (log churn + a stuck "Connecting..." on return). We
+        // suspend the idle timer on first successful connect and resume it when
+        // the hub closes (NotifyClosed).
+        if (!_idleSuspended)
+        {
+            _idleSuspended = true;
+            _model.Connection.SuspendIdleTimeout();
+        }
+
         lock (_queueLock)
         {
             if (_queue == null)
@@ -257,15 +269,43 @@ public class ModManagerSection : VBoxContainer
         return (true, _model.Connection);
     }
 
-    // WorkshopDownloadQueue.Changed fires from its worker's pool thread.
+    // Called when the Mod Hub is closed (BACK). Resumes the idle timeout that was
+    // suspended while browsing, so the connection isn't held open forever.
+    public void NotifyClosed()
+    {
+        if (_idleSuspended && _model?.Connection != null)
+        {
+            _model.Connection.ResumeIdleTimeout();
+            _idleSuspended = false;
+        }
+    }
+
+    // WorkshopDownloadQueue.Changed fires from its worker's pool thread. Progress
+    // events arrive up to ~4/s; re-rendering the SUBSCRIBED list re-scans external
+    // storage each time (log spam + IO), so mid-download refreshes are gated to
+    // one per 600ms. Terminal transitions (queue went idle) always render so the
+    // final state is never missed.
+    private long _lastQueueUiTick;
+
     private void OnQueueChanged()
     {
+        bool busy;
+        lock (_queueLock)
+            busy = _queue?.IsBusy == true;
+
+        var now = System.Environment.TickCount64;
+        if (busy && now - _lastQueueUiTick < 600)
+            return;
+        _lastQueueUiTick = now;
+
         Callable
             .From(() =>
             {
                 _downloadsPane.RenderFromQueue();
                 if (_subscribedPane.Visible)
                     _subscribedPane.RenderList();
+                if (_workshopPane.Visible)
+                    _workshopPane.NotifyInstallsChanged();
             })
             .CallDeferred();
     }

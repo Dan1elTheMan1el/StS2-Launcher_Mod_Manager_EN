@@ -31,6 +31,28 @@ public static class WorkshopInstaller
         public bool NoManifest;
     }
 
+    // Serializes downloads of the SAME item: the conflict-resolve path and a
+    // sync-triggered queue download can race on the shared
+    // Mods/.downloading/<pfid>/ temp dir (observed on device as
+    // DirectoryNotFoundException when one deleted the dir mid-download of the
+    // other). One gate per published file id.
+    private static readonly object _gatesLock = new();
+    private static readonly System.Collections.Generic.Dictionary<ulong, SemaphoreSlim> _gates =
+        new();
+
+    private static SemaphoreSlim GetGate(ulong pfid)
+    {
+        lock (_gatesLock)
+        {
+            if (!_gates.TryGetValue(pfid, out var gate))
+            {
+                gate = new SemaphoreSlim(1, 1);
+                _gates[pfid] = gate;
+            }
+            return gate;
+        }
+    }
+
     // Downloads the item into Mods/.downloading/<id>/, installs it, then removes
     // the temp dir. This is the single entry point the sync/browser layers call.
     public static async Task<WorkshopInstallResult> DownloadAndInstallAsync(
@@ -48,6 +70,8 @@ public static class WorkshopInstaller
         var downloadingRoot = Path.Combine(AppPaths.ExternalModsDir, ".downloading");
         var itemDir = Path.Combine(downloadingRoot, item.PublishedFileId.ToString());
 
+        var gate = GetGate(item.PublishedFileId);
+        await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             TryDeleteDir(itemDir); // clear any stale partial from a previous run
@@ -72,6 +96,7 @@ public static class WorkshopInstaller
         finally
         {
             TryDeleteDir(itemDir);
+            gate.Release();
         }
     }
 

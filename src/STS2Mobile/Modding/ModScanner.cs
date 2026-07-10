@@ -12,6 +12,11 @@ namespace STS2Mobile.Modding;
 // leaving the Installed tab empty on device.
 public static class ModScanner
 {
+    // Scan() runs on every list refresh (including throttled download-progress
+    // refreshes), so per-scan warnings about the same duplicate/root manifest
+    // would flood logcat. Warn once per unique path per session.
+    private static readonly HashSet<string> _warnedPaths = new(StringComparer.Ordinal);
+
     public static List<ModEntryInfo> Scan()
     {
         var results = new List<ModEntryInfo>();
@@ -32,10 +37,14 @@ public static class ModScanner
             {
                 if (!seenIds.Add(manifest.Id))
                 {
-                    PatchHelper.Log(
-                        $"[Mods] Duplicate mod id '{manifest.Id}' — keeping the first, "
-                            + $"ignoring {manifestPath}"
-                    );
+                    lock (_warnedPaths)
+                    {
+                        if (_warnedPaths.Add("dup:" + manifestPath))
+                            PatchHelper.Log(
+                                $"[Mods] Duplicate mod id '{manifest.Id}' — keeping the first, "
+                                    + $"ignoring {manifestPath}"
+                            );
+                    }
                     continue;
                 }
 
@@ -75,10 +84,16 @@ public static class ModScanner
 
                 var m = ModManifest.TryParse(json);
                 if (m != null && m.IsValid())
-                    PatchHelper.Log(
-                        $"[Mods] Root-level manifest '{Path.GetFileName(json)}' (id={m.Id}) is "
-                            + "loaded by the game but not managed by the launcher (no containing folder)."
-                    );
+                {
+                    lock (_warnedPaths)
+                    {
+                        if (_warnedPaths.Add("root:" + json))
+                            PatchHelper.Log(
+                                $"[Mods] Root-level manifest '{Path.GetFileName(json)}' (id={m.Id}) is "
+                                    + "loaded by the game but not managed by the launcher (no containing folder)."
+                            );
+                    }
+                }
             }
         }
         catch { }

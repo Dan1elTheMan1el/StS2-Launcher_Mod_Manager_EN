@@ -74,8 +74,12 @@ public class WorkshopBrowserPane : VBoxContainer
         AddChild(filterRow);
 
         _sortOption = new OptionButton();
-        _sortOption.AddThemeFontSizeOverride("font_size", (int)(13 * scale));
-        _sortOption.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(38 * scale));
+        _sortOption.AddThemeFontSizeOverride("font_size", (int)(14 * scale));
+        // The dropdown list is a separate PopupMenu — without its own override it
+        // renders at the unscaled default (~unreadably small on device).
+        _sortOption.GetPopup().AddThemeFontSizeOverride("font_size", (int)(14 * scale));
+        _sortOption.GetPopup().AddThemeConstantOverride("v_separation", (int)(10 * scale));
+        _sortOption.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(44 * scale));
         _sortOption.AddItem("Popular", (int)WorkshopQuerySort.Popular);
         _sortOption.AddItem("Newest", (int)WorkshopQuerySort.Newest);
         _sortOption.AddItem("Trending", (int)WorkshopQuerySort.Trending);
@@ -127,7 +131,10 @@ public class WorkshopBrowserPane : VBoxContainer
 
     private async Task ActivateAsync(Func<Task<(bool ok, SteamConnection conn)>> ensureSession)
     {
-        RunOnMain(() => SetStatus("Connecting to Steam...", InfoColor));
+        bool first = !_initialized;
+        if (first)
+            RunOnMain(() => SetStatus("Connecting to Steam...", InfoColor));
+
         var (ok, conn) = await ensureSession().ConfigureAwait(false);
         if (!ok)
         {
@@ -137,12 +144,55 @@ public class WorkshopBrowserPane : VBoxContainer
         }
         _connection = conn;
 
-        if (_initialized)
+        if (first)
+        {
+            _initialized = true;
+            await LoadStatusAsync().ConfigureAwait(false);
+            await RunQueryAsync(resetPage: true).ConfigureAwait(false);
             return;
-        _initialized = true;
+        }
 
+        // Returning to the tab: don't re-query the whole list or leave the status
+        // stuck on "Connecting...". Refresh subscription/install state (a subscribe
+        // or unsubscribe may have happened on another tab) and re-apply it to the
+        // already-rendered cards, then restore the result count.
         await LoadStatusAsync().ConfigureAwait(false);
-        await RunQueryAsync(resetPage: true).ConfigureAwait(false);
+        RunOnMain(() =>
+        {
+            RefreshAllCardStatuses();
+            SetStatus($"{_totalLoaded} / {_totalAvailable} item(s)", InfoColor);
+        });
+    }
+
+    // Re-applies the current subscription/install state to every rendered card.
+    // Must run on the main thread.
+    private void RefreshAllCardStatuses()
+    {
+        foreach (var pfid in _cardsByPfid.Keys.ToList())
+            RefreshCardStatus(pfid);
+    }
+
+    // Called (main thread, throttled by ModManagerSection) when the download queue
+    // changes while this tab is visible: reload install state from the registry so
+    // a just-completed install flips its card badge to Installed without an RPC.
+    public void NotifyInstallsChanged()
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var installed = ModConfig
+                    .Load()
+                    .Mods.Where(m => m.IsWorkshop && m.PublishedFileId != 0)
+                    .ToDictionary(m => m.PublishedFileId, m => m);
+                _installedByPfid = installed;
+                RunOnMain(RefreshAllCardStatuses);
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[Workshop] Install-state refresh failed: {ex.Message}");
+            }
+        });
     }
 
     private async Task LoadStatusAsync()
