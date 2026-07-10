@@ -10,11 +10,7 @@ public class DownloadQueueRow : PanelContainer
 {
     public DownloadQueueRow(WorkshopDownloadEntry entry, float scale)
     {
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
-        bg.SetCornerRadiusAll((int)(4 * scale));
-        bg.SetContentMarginAll((int)(8 * scale));
-        AddThemeStyleboxOverride("panel", bg);
+        AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
 
         var vbox = new VBoxContainer();
         vbox.AddThemeConstantOverride("separation", (int)(4 * scale));
@@ -41,9 +37,12 @@ public class DownloadQueueRow : PanelContainer
         );
         statusLabel.AddThemeColorOverride(
             "font_color",
-            entry.State == WorkshopDownloadState.Failed
-                ? new Color(0.95f, 0.55f, 0.4f)
-                : new Color(0.65f, 0.65f, 0.7f)
+            entry.State switch
+            {
+                WorkshopDownloadState.Failed => Ui.Danger,
+                WorkshopDownloadState.Completed => Ui.Success,
+                _ => Ui.TextSecondary,
+            }
         );
         vbox.AddChild(statusLabel);
 

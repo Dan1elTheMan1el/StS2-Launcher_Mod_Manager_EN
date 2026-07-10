@@ -46,7 +46,7 @@ public class WorkshopUpdateDialog : ColorRect
         var box = new PanelContainer();
         box.MouseFilter = MouseFilterEnum.Stop;
         var boxStyle = new StyleBoxFlat();
-        boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
+        boxStyle.BgColor = Ui.SurfaceHigh;
         boxStyle.SetCornerRadiusAll((int)(8 * scale));
         boxStyle.SetContentMarginAll((int)(20 * scale));
         box.AddThemeStyleboxOverride("panel", boxStyle);
@@ -88,8 +88,14 @@ public class WorkshopUpdateDialog : ColorRect
             listBox.AddChild(row);
         }
 
-        var closeButton = new StyledButton("CLOSE", scale, fontSize: 14, height: 44);
-        closeButton.CustomMinimumSize = new Vector2((int)(140 * scale), (int)(44 * scale));
+        var closeButton = new StyledButton(
+            "CLOSE",
+            scale,
+            fontSize: 14,
+            height: 52,
+            variant: ButtonVariant.Primary
+        );
+        closeButton.CustomMinimumSize = new Vector2((int)(160 * scale), (int)(52 * scale));
         closeButton.Pressed += () =>
         {
             QueueFree();

@@ -20,11 +20,7 @@ public class ModListRow : PanelContainer
     {
         ModId = info.Id;
 
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
-        bg.SetCornerRadiusAll((int)(4 * scale));
-        bg.SetContentMarginAll((int)(10 * scale));
-        AddThemeStyleboxOverride("panel", bg);
+        AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
 
         var topRow = new HBoxContainer();
         topRow.AddThemeConstantOverride("separation", (int)(6 * scale));
@@ -42,15 +38,11 @@ public class ModListRow : PanelContainer
         topRow.AddChild(titleLabel);
 
         if (!string.IsNullOrEmpty(badge))
-        {
-            var badgeLabel = new StyledLabel(badge, scale, fontSize: 10);
-            badgeLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
-            topRow.AddChild(badgeLabel);
-        }
+            topRow.AddChild(Ui.MakePill(badge, scale, Ui.TextSecondary));
 
         // Chevron hint that the row opens a detail page.
         var chevron = new StyledLabel("›", scale, fontSize: 18);
-        chevron.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
+        chevron.AddThemeColorOverride("font_color", Ui.TextDisabled);
         topRow.AddChild(chevron);
 
         // Tap opens the detail page; drags fall through to the ScrollContainer

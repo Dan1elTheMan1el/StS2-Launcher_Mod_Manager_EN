@@ -13,11 +13,7 @@ public class SubscribedModRow : PanelContainer
 
     public SubscribedModRow(string title, string version, string status, bool statusIsError, float scale)
     {
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
-        bg.SetCornerRadiusAll((int)(4 * scale));
-        bg.SetContentMarginAll((int)(8 * scale));
-        AddThemeStyleboxOverride("panel", bg);
+        AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
 
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
@@ -41,14 +37,23 @@ public class SubscribedModRow : PanelContainer
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         vbox.AddChild(titleLabel);
 
-        var statusLabel = new StyledLabel(status, scale, fontSize: 12, align: HorizontalAlignment.Left);
+        var statusLabel = new StyledLabel(status, scale, fontSize: Ui.FontCaption, align: HorizontalAlignment.Left);
         statusLabel.AddThemeColorOverride(
             "font_color",
-            statusIsError ? new Color(0.95f, 0.55f, 0.4f) : new Color(0.65f, 0.65f, 0.7f)
+            statusIsError ? Ui.Danger
+            : status == "Installed" ? Ui.Success
+            : Ui.TextSecondary
         );
         vbox.AddChild(statusLabel);
 
-        var unsubButton = new StyledButton("UNSUBSCRIBE", scale, fontSize: 12, height: 36);
+        var unsubButton = new StyledButton(
+            "UNSUBSCRIBE",
+            scale,
+            fontSize: Ui.FontCaption,
+            height: 44,
+            variant: ButtonVariant.Danger
+        );
+        unsubButton.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(44 * scale));
         unsubButton.Pressed += () => UnsubscribePressed?.Invoke();
         row.AddChild(unsubButton);
 

@@ -12,8 +12,8 @@ namespace STS2Mobile.Launcher.Sections;
 // the main thread there), so this pane itself never touches the queue off-thread.
 public class WorkshopDownloadsPane : VBoxContainer
 {
-    private static readonly Color InfoColor = new(0.75f, 0.75f, 0.8f);
-    private static readonly Color WarnColor = new(0.95f, 0.6f, 0.3f);
+    private static readonly Color InfoColor = Ui.TextSecondary;
+    private static readonly Color WarnColor = Ui.Warn;
 
     private readonly float _scale;
     private readonly StyledLabel _statusLabel;
@@ -37,7 +37,13 @@ public class WorkshopDownloadsPane : VBoxContainer
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         headerRow.AddChild(_statusLabel);
 
-        _cancelAllButton = new StyledButton("CANCEL ALL", scale, fontSize: 13, height: 38);
+        _cancelAllButton = new StyledButton(
+            "CANCEL ALL",
+            scale,
+            fontSize: 13,
+            height: 44,
+            variant: ButtonVariant.Danger
+        );
         _cancelAllButton.Disabled = true;
         _cancelAllButton.Pressed += () => _queue?.CancelAll();
         headerRow.AddChild(_cancelAllButton);
@@ -76,7 +82,15 @@ public class WorkshopDownloadsPane : VBoxContainer
 
         if (entries.Count == 0)
         {
-            SetStatus("No downloads.", InfoColor);
+            SetStatus("", InfoColor);
+            _list.AddChild(
+                Ui.MakeEmptyState(
+                    null,
+                    "No downloads.",
+                    "Workshop items you subscribe to are downloaded here.",
+                    _scale
+                )
+            );
             return;
         }
 

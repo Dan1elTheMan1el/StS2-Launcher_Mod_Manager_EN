@@ -25,8 +25,8 @@ public class StyledDialog : ColorRect
 
         var dialogBox = new PanelContainer();
         var boxStyle = new StyleBoxFlat();
-        boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
-        boxStyle.SetCornerRadiusAll((int)(8 * scale));
+        boxStyle.BgColor = Ui.SurfaceHigh;
+        boxStyle.SetCornerRadiusAll((int)(Ui.RadiusL * scale));
         boxStyle.SetContentMarginAll((int)(24 * scale));
         dialogBox.AddThemeStyleboxOverride("panel", boxStyle);
 
@@ -45,9 +45,17 @@ public class StyledDialog : ColorRect
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
 
-        var cancelButton = new StyledButton(cancelLabel, scale, fontSize: 14, height: 44);
+        // Cancel is the quiet ghost, OK is the single emphasized action of the
+        // dialog (Von Restorff) — and both are full-height touch targets.
+        var cancelButton = new StyledButton(
+            cancelLabel,
+            scale,
+            fontSize: 14,
+            height: 52,
+            variant: ButtonVariant.Ghost
+        );
         cancelButton.CustomMinimumSize = new Vector2(
-            (int)(120 * scale),
+            (int)(140 * scale),
             cancelButton.CustomMinimumSize.Y
         );
         cancelButton.Pressed += () =>
@@ -57,8 +65,14 @@ public class StyledDialog : ColorRect
         };
         buttonRow.AddChild(cancelButton);
 
-        var okButton = new StyledButton(okLabel, scale, fontSize: 14, height: 44);
-        okButton.CustomMinimumSize = new Vector2((int)(120 * scale), okButton.CustomMinimumSize.Y);
+        var okButton = new StyledButton(
+            okLabel,
+            scale,
+            fontSize: 14,
+            height: 52,
+            variant: ButtonVariant.Primary
+        );
+        okButton.CustomMinimumSize = new Vector2((int)(140 * scale), okButton.CustomMinimumSize.Y);
         okButton.Pressed += () =>
         {
             QueueFree();

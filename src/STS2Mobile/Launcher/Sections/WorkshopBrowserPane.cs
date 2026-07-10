@@ -21,8 +21,8 @@ public class WorkshopBrowserPane : VBoxContainer
     private const uint PerPage = 20;
     private const ulong LargeDownloadWarningBytes = 50 * 1024 * 1024;
 
-    private static readonly Color InfoColor = new(0.75f, 0.75f, 0.8f);
-    private static readonly Color WarnColor = new(0.95f, 0.6f, 0.3f);
+    private static readonly Color InfoColor = Ui.TextSecondary;
+    private static readonly Color WarnColor = Ui.Warn;
 
     private readonly float _scale;
     private readonly StyledLineEdit _searchEdit;
@@ -64,8 +64,14 @@ public class WorkshopBrowserPane : VBoxContainer
         _searchEdit.TextSubmitted += _ => OnSearchPressed();
         searchRow.AddChild(_searchEdit);
 
-        _searchButton = new StyledButton("SEARCH", scale, fontSize: 13, height: 38);
-        _searchButton.CustomMinimumSize = new Vector2((int)(90 * scale), 0);
+        _searchButton = new StyledButton(
+            "SEARCH",
+            scale,
+            fontSize: 13,
+            height: Ui.TouchHeight,
+            variant: ButtonVariant.Primary
+        );
+        _searchButton.CustomMinimumSize = new Vector2((int)(120 * scale), 0);
         _searchButton.Pressed += OnSearchPressed;
         searchRow.AddChild(_searchButton);
 
@@ -76,10 +82,22 @@ public class WorkshopBrowserPane : VBoxContainer
         _sortOption = new OptionButton();
         _sortOption.AddThemeFontSizeOverride("font_size", (int)(14 * scale));
         // The dropdown list is a separate PopupMenu — without its own override it
-        // renders at the unscaled default (~unreadably small on device).
-        _sortOption.GetPopup().AddThemeFontSizeOverride("font_size", (int)(14 * scale));
-        _sortOption.GetPopup().AddThemeConstantOverride("v_separation", (int)(10 * scale));
-        _sortOption.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(44 * scale));
+        // renders at the unscaled default (~unreadably small on device, 사용자
+        // 보고). Items also get taller separation for finger-sized targets.
+        _sortOption.GetPopup().AddThemeFontSizeOverride("font_size", (int)(15 * scale));
+        _sortOption.GetPopup().AddThemeConstantOverride("v_separation", (int)(14 * scale));
+        _sortOption.CustomMinimumSize = new Vector2(
+            (int)(170 * scale),
+            (int)(Ui.TouchHeight * scale)
+        );
+        var optNormal = Ui.Filled(scale, Ui.Card);
+        optNormal.BorderColor = Ui.Divider;
+        optNormal.SetBorderWidthAll(System.Math.Max(1, (int)(1 * scale)));
+        optNormal.ContentMarginLeft = (int)(12 * scale);
+        _sortOption.AddThemeStyleboxOverride("normal", optNormal);
+        _sortOption.AddThemeStyleboxOverride("hover", Ui.Filled(scale, Ui.CardHover));
+        _sortOption.AddThemeStyleboxOverride("pressed", Ui.Filled(scale, Ui.CardDown));
+        _sortOption.AddThemeColorOverride("font_color", Ui.TextPrimary);
         _sortOption.AddItem("Popular", (int)WorkshopQuerySort.Popular);
         _sortOption.AddItem("Newest", (int)WorkshopQuerySort.Newest);
         _sortOption.AddItem("Trending", (int)WorkshopQuerySort.Trending);
@@ -89,7 +107,7 @@ public class WorkshopBrowserPane : VBoxContainer
         _sortOption.ItemSelected += _ => OnSearchPressed();
         filterRow.AddChild(_sortOption);
 
-        _tagsToggleButton = new StyledButton("TAGS", scale, fontSize: 13, height: 38);
+        _tagsToggleButton = new StyledButton("TAGS", scale, fontSize: 13, height: Ui.TouchHeight);
         _tagsToggleButton.ToggleMode = true;
         _tagsToggleButton.Toggled += pressed => _tagsPanel.Visible = pressed;
         filterRow.AddChild(_tagsToggleButton);
@@ -113,7 +131,7 @@ public class WorkshopBrowserPane : VBoxContainer
         _resultsList.AddThemeConstantOverride("separation", (int)(6 * scale));
         scroll.AddChild(_resultsList);
 
-        _loadMoreButton = new StyledButton("LOAD MORE", scale, fontSize: 13, height: 40);
+        _loadMoreButton = new StyledButton("LOAD MORE", scale, fontSize: 13, height: Ui.TouchHeight);
         _loadMoreButton.Visible = false;
         _loadMoreButton.Pressed += OnLoadMorePressed;
         AddChild(_loadMoreButton);

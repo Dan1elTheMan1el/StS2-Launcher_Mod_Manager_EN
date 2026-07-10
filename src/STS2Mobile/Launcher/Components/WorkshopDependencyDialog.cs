@@ -24,14 +24,29 @@ public class WorkshopDependencyDialog : ColorRect
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
+        MouseFilter = MouseFilterEnum.Stop;
+        // Tapping the dimmed area closes the dialog — never trap the user.
+        GuiInput += ev =>
+        {
+            if (
+                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                or InputEventScreenTouch { Pressed: true }
+            )
+            {
+                QueueFree();
+                Closed?.Invoke();
+            }
+        };
 
         var center = new CenterContainer();
         center.SetAnchorsPreset(LayoutPreset.FullRect);
+        center.MouseFilter = MouseFilterEnum.Ignore;
 
         var box = new PanelContainer();
+        box.MouseFilter = MouseFilterEnum.Stop;
         var boxStyle = new StyleBoxFlat();
-        boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
-        boxStyle.SetCornerRadiusAll((int)(8 * scale));
+        boxStyle.BgColor = Ui.SurfaceHigh;
+        boxStyle.SetCornerRadiusAll((int)(Ui.RadiusL * scale));
         boxStyle.SetContentMarginAll((int)(20 * scale));
         box.AddThemeStyleboxOverride("panel", boxStyle);
         box.CustomMinimumSize = new Vector2((int)(360 * scale), 0);
@@ -70,14 +85,18 @@ public class WorkshopDependencyDialog : ColorRect
 
             if (alreadySubscribed.Contains(dep.PublishedFileId))
             {
-                var subscribedLabel = new StyledLabel("Subscribed", scale, fontSize: 12);
-                subscribedLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.75f, 0.55f));
-                row.AddChild(subscribedLabel);
+                row.AddChild(Ui.MakePill("Subscribed", scale, Ui.Success));
                 continue;
             }
 
-            var depButton = new StyledButton("SUBSCRIBE", scale, fontSize: 12, height: 32);
-            depButton.CustomMinimumSize = new Vector2((int)(100 * scale), (int)(32 * scale));
+            var depButton = new StyledButton(
+                "SUBSCRIBE",
+                scale,
+                fontSize: 12,
+                height: 44,
+                variant: ButtonVariant.Primary
+            );
+            depButton.CustomMinimumSize = new Vector2((int)(140 * scale), (int)(44 * scale));
             depButton.Pressed += () =>
             {
                 depButton.Disabled = true;
@@ -114,7 +133,13 @@ public class WorkshopDependencyDialog : ColorRect
             row.AddChild(depButton);
         }
 
-        var closeButton = new StyledButton("CLOSE", scale, fontSize: 14, height: 40);
+        var closeButton = new StyledButton(
+            "CLOSE",
+            scale,
+            fontSize: 14,
+            height: 48,
+            variant: ButtonVariant.Ghost
+        );
         closeButton.Pressed += () =>
         {
             QueueFree();

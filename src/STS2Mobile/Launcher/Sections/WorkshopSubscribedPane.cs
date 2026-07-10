@@ -19,8 +19,8 @@ public class WorkshopSubscribedPane : VBoxContainer
 {
     public event Action<string, Action, Action> ConfirmationRequested;
 
-    private static readonly Color InfoColor = new(0.75f, 0.75f, 0.8f);
-    private static readonly Color WarnColor = new(0.95f, 0.6f, 0.3f);
+    private static readonly Color InfoColor = Ui.TextSecondary;
+    private static readonly Color WarnColor = Ui.Warn;
 
     private readonly float _scale;
     private readonly StyledLabel _statusLabel;
@@ -241,11 +241,22 @@ public class WorkshopSubscribedPane : VBoxContainer
 
         if (workshopMods.Count == 0 && pending.Count == 0 && (_conflicts?.Count ?? 0) == 0)
         {
-            var empty = new StyledLabel("No Workshop subscriptions installed.", _scale, fontSize: 12);
-            empty.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            _list.AddChild(empty);
+            _list.AddChild(
+                Ui.MakeEmptyState(
+                    null,
+                    "No Workshop subscriptions yet.",
+                    "Browse the WORKSHOP tab and subscribe — items download automatically.",
+                    _scale
+                )
+            );
             return;
         }
+
+        // Chunk the list (Miller): in-flight first, then installed, then conflicts
+        // — each under its own header when the list is mixed.
+        bool mixed = pending.Count > 0 && workshopMods.Count > 0;
+        if (pending.Count > 0 && (mixed || (_conflicts?.Count ?? 0) > 0))
+            _list.AddChild(Ui.MakeSectionHeader("IN PROGRESS", _scale));
 
         foreach (var q in pending)
         {
@@ -277,6 +288,9 @@ public class WorkshopSubscribedPane : VBoxContainer
             row.DetailRequested += () => ShowItemDetail(item);
             _list.AddChild(row);
         }
+
+        if (mixed || (workshopMods.Count > 0 && (_conflicts?.Count ?? 0) > 0))
+            _list.AddChild(Ui.MakeSectionHeader("INSTALLED", _scale));
 
         foreach (var entry in workshopMods)
         {
@@ -323,24 +337,12 @@ public class WorkshopSubscribedPane : VBoxContainer
         if (_conflicts == null || _conflicts.Count == 0)
             return;
 
-        var header = new StyledLabel(
-            "Also installed manually — Workshop copy not applied:",
-            _scale,
-            fontSize: 11,
-            align: HorizontalAlignment.Left
-        );
-        header.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        header.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.4f));
-        _list.AddChild(header);
+        _list.AddChild(Ui.MakeSectionHeader("ALSO INSTALLED MANUALLY — WORKSHOP COPY NOT APPLIED", _scale));
 
         foreach (var c in _conflicts)
         {
             var panel = new PanelContainer();
-            var bg = new StyleBoxFlat();
-            bg.BgColor = new Color(0.22f, 0.19f, 0.14f);
-            bg.SetCornerRadiusAll((int)(4 * _scale));
-            bg.SetContentMarginAll((int)(8 * _scale));
-            panel.AddThemeStyleboxOverride("panel", bg);
+            panel.AddThemeStyleboxOverride("panel", Ui.TintedCardStyle(_scale, Ui.Warn));
 
             var row = new HBoxContainer();
             row.AddThemeConstantOverride("separation", (int)(8 * _scale));
@@ -373,14 +375,23 @@ public class WorkshopSubscribedPane : VBoxContainer
             var verLabel = new StyledLabel(
                 $"installed {installed} · Workshop {workshop}{note}",
                 _scale,
-                fontSize: 11,
+                fontSize: Ui.FontMicro,
                 align: HorizontalAlignment.Left
             );
-            verLabel.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.75f));
+            verLabel.AddThemeColorOverride(
+                "font_color",
+                cmp > 0 ? Ui.Warn : Ui.TextSecondary
+            );
             info.AddChild(verLabel);
 
-            var useBtn = new StyledButton("USE WORKSHOP", _scale, fontSize: 11, height: 34);
-            useBtn.CustomMinimumSize = new Vector2((int)(120 * _scale), (int)(34 * _scale));
+            var useBtn = new StyledButton(
+                "USE WORKSHOP",
+                _scale,
+                fontSize: Ui.FontCaption,
+                height: 44,
+                variant: ButtonVariant.Primary
+            );
+            useBtn.CustomMinimumSize = new Vector2((int)(150 * _scale), (int)(44 * _scale));
             var captured = c;
             useBtn.Pressed += () => OnUseWorkshopPressed(captured);
             row.AddChild(useBtn);

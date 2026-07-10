@@ -29,11 +29,7 @@ public class WorkshopBrowseCard : PanelContainer
         _scale = scale;
         PublishedFileId = item.PublishedFileId;
 
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.18f, 0.18f, 0.22f);
-        bg.SetCornerRadiusAll((int)(4 * scale));
-        bg.SetContentMarginAll((int)(8 * scale));
-        AddThemeStyleboxOverride("panel", bg);
+        AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
 
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
@@ -67,16 +63,21 @@ public class WorkshopBrowseCard : PanelContainer
 
         var statsText =
             $"{item.Subscriptions} subscriber(s) · {STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize)} · {(item.VoteScore * 100f):F0}% rated";
-        var statsLabel = new StyledLabel(statsText, scale, fontSize: 11, align: HorizontalAlignment.Left);
-        statsLabel.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.7f));
+        var statsLabel = new StyledLabel(statsText, scale, fontSize: Ui.FontMicro, align: HorizontalAlignment.Left);
+        statsLabel.AddThemeColorOverride("font_color", Ui.TextSecondary);
         info.AddChild(statsLabel);
 
-        _badgeLabel = new StyledLabel("", scale, fontSize: 11, align: HorizontalAlignment.Left);
-        _badgeLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.65f, 0.85f));
+        _badgeLabel = new StyledLabel("", scale, fontSize: Ui.FontMicro, align: HorizontalAlignment.Left);
         info.AddChild(_badgeLabel);
 
-        _actionButton = new StyledButton("SUBSCRIBE", scale, fontSize: 12, height: 36);
-        _actionButton.CustomMinimumSize = new Vector2((int)(110 * scale), (int)(36 * scale));
+        _actionButton = new StyledButton(
+            "SUBSCRIBE",
+            scale,
+            fontSize: Ui.FontCaption,
+            height: 44,
+            variant: ButtonVariant.Primary
+        );
+        _actionButton.CustomMinimumSize = new Vector2((int)(140 * scale), (int)(44 * scale));
         _actionButton.Pressed += () =>
         {
             if (_subscribed)
@@ -102,6 +103,20 @@ public class WorkshopBrowseCard : PanelContainer
         _subscribed = subscribed;
         _badgeLabel.Text = badge ?? "";
         _badgeLabel.Visible = !string.IsNullOrEmpty(badge);
+        _badgeLabel.AddThemeColorOverride(
+            "font_color",
+            badge switch
+            {
+                "Installed" => Ui.Success,
+                "Update available" => Ui.Warn,
+                _ => Ui.Accent,
+            }
+        );
+
+        // Filled accent while the item is actionable; once subscribed the card's
+        // action becomes destructive-ish and recedes to a quiet secondary button
+        // (Von Restorff — keep the filled accent rare).
         _actionButton.Text = subscribed ? "UNSUBSCRIBE" : "SUBSCRIBE";
+        _actionButton.ApplyVariant(_scale, subscribed ? ButtonVariant.Secondary : ButtonVariant.Primary);
     }
 }

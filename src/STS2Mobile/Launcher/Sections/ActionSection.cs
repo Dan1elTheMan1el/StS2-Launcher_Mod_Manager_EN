@@ -30,15 +30,15 @@ public class ActionSection : VBoxContainer
 
     public ActionSection(float scale)
     {
-        _retryButton = new StyledButton("RETRY", scale);
+        _retryButton = new StyledButton("RETRY", scale, variant: ButtonVariant.Danger);
         _retryButton.Visible = false;
         _retryButton.Pressed += () => RetryPressed?.Invoke();
         AddChild(_retryButton);
 
         var r = (int)(4 * scale);
         var bw = System.Math.Max(1, (int)(2 * scale));
-        _offStyle = StyledButton.MakeOutline(new Color(0.7f, 0.25f, 0.25f), r, bw);
-        _onStyle = StyledButton.MakeOutline(new Color(0.25f, 0.65f, 0.3f), r, bw);
+        _offStyle = StyledButton.MakeOutline(Ui.Danger, r, bw);
+        _onStyle = StyledButton.MakeOutline(Ui.Success, r, bw);
 
         _localBackupButton = new StyledButton(
             "Local Backup",
@@ -108,7 +108,15 @@ public class ActionSection : VBoxContainer
         _launcherUpdateButton.Pressed += () => CheckLauncherUpdatePressed?.Invoke();
         AddChild(_launcherUpdateButton);
 
-        _launchButton = new StyledButton("LAUNCH", scale, fontSize: 16, height: 48);
+        // PLAY is the single filled-accent action of the main screen — everything
+        // else stays secondary so it reads as THE thing to press (Von Restorff).
+        _launchButton = new StyledButton(
+            "LAUNCH",
+            scale,
+            fontSize: 17,
+            height: Ui.TouchHeightBig,
+            variant: ButtonVariant.Primary
+        );
         _launchButton.Visible = false;
         _launchButton.Pressed += () => LaunchPressed?.Invoke();
         AddChild(_launchButton);

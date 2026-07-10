@@ -32,9 +32,9 @@ public class ModManagerSection : VBoxContainer
     private const int TabLocal = 2;
     private const int TabDownloads = 3;
 
-    private static readonly Color InfoColor = new(0.75f, 0.75f, 0.8f);
-    private static readonly Color WarnColor = new(0.95f, 0.75f, 0.3f);
-    private static readonly Color ErrorColor = new(0.95f, 0.4f, 0.4f);
+    private static readonly Color InfoColor = Ui.TextSecondary;
+    private static readonly Color WarnColor = Ui.Warn;
+    private static readonly Color ErrorColor = Ui.Danger;
 
     private readonly float _scale;
     private readonly StyledButton[] _tabButtons;
@@ -67,23 +67,58 @@ public class ModManagerSection : VBoxContainer
         SizeFlagsVertical = SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", (int)(8 * scale));
 
+        // Header row: top-left back (the position every Android screen puts it —
+        // Jakob's law) + screen title. The old bottom-anchored BACK is gone; the
+        // hardware back button still routes here via LauncherUI.
         var header = new HBoxContainer();
-        header.AddThemeConstantOverride("separation", (int)(6 * scale));
+        header.AddThemeConstantOverride("separation", (int)(Ui.GapM * scale));
         AddChild(header);
 
-        var title = new StyledLabel("Mod Hub", scale, fontSize: 18);
+        _backButton = new StyledButton(
+            "‹  BACK",
+            scale,
+            fontSize: Ui.FontBody,
+            height: Ui.TouchHeight,
+            variant: ButtonVariant.Ghost
+        );
+        _backButton.CustomMinimumSize = new Vector2(
+            (int)(120 * scale),
+            (int)(Ui.TouchHeight * scale)
+        );
+        _backButton.Pressed += () => BackPressed?.Invoke();
+        header.AddChild(_backButton);
+
+        var title = new StyledLabel(
+            "Mod Hub",
+            scale,
+            fontSize: Ui.FontTitle,
+            align: HorizontalAlignment.Left
+        );
+        title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         header.AddChild(title);
+
+        // Tab bar: four equal-width tabs with an accent underline on the active
+        // one (Material tabs — the pattern mobile users already know).
+        var tabRow = new HBoxContainer();
+        tabRow.AddThemeConstantOverride("separation", (int)(Ui.GapS * scale));
+        AddChild(tabRow);
 
         var tabNames = new[] { "WORKSHOP", "SUBSCRIBED", "LOCAL", "DOWNLOADS" };
         _tabButtons = new StyledButton[tabNames.Length];
         for (int i = 0; i < tabNames.Length; i++)
         {
             var idx = i;
-            var btn = new StyledButton(tabNames[i], scale, fontSize: 12, height: 38);
+            var btn = new StyledButton(
+                tabNames[i],
+                scale,
+                fontSize: 13,
+                height: Ui.TouchHeight,
+                variant: ButtonVariant.Ghost
+            );
             btn.ToggleMode = true;
-            btn.CustomMinimumSize = new Vector2((int)(96 * scale), 0);
+            btn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             btn.Pressed += () => SelectTab(idx);
-            header.AddChild(btn);
+            tabRow.AddChild(btn);
             _tabButtons[i] = btn;
         }
 
@@ -149,10 +184,6 @@ public class ModManagerSection : VBoxContainer
         _downloadsPane = new WorkshopDownloadsPane(scale);
         AddChild(_downloadsPane);
 
-        _backButton = new StyledButton("BACK", scale, fontSize: 14);
-        _backButton.Pressed += () => BackPressed?.Invoke();
-        AddChild(_backButton);
-
         SelectTab(TabLocal);
     }
 
@@ -214,16 +245,30 @@ public class ModManagerSection : VBoxContainer
         }
     }
 
+    // Material-style tab state: active = accent underline + primary text,
+    // inactive = plain secondary text.
     private void ApplyTabStyle(Button button, bool active)
     {
-        var r = (int)(4 * _scale);
-        var bw = Math.Max(1, (int)(2 * _scale));
-        var style = active
-            ? StyledButton.MakeOutline(new Color(0.35f, 0.55f, 0.85f), r, bw)
-            : StyledButton.MakeOutline(new Color(0.3f, 0.3f, 0.35f), r, bw);
-        button.AddThemeStyleboxOverride("normal", style);
-        button.AddThemeStyleboxOverride("hover", style);
-        button.AddThemeStyleboxOverride("pressed", style);
+        StyleBoxFlat Make()
+        {
+            var box = new StyleBoxFlat { BgColor = Colors.Transparent };
+            if (active)
+            {
+                box.BorderColor = Ui.Accent;
+                box.BorderWidthBottom = Math.Max(2, (int)(3 * _scale));
+            }
+            return box;
+        }
+
+        button.AddThemeStyleboxOverride("normal", Make());
+        button.AddThemeStyleboxOverride("hover", Make());
+        button.AddThemeStyleboxOverride("pressed", Make());
+
+        var fontColor = active ? Ui.TextPrimary : Ui.TextSecondary;
+        button.AddThemeColorOverride("font_color", fontColor);
+        button.AddThemeColorOverride("font_hover_color", fontColor);
+        button.AddThemeColorOverride("font_pressed_color", fontColor);
+        button.AddThemeColorOverride("font_focus_color", fontColor);
     }
 
     // Ensures the launcher's Steam session is connected and logged in, then lazily
@@ -351,9 +396,14 @@ public class ModManagerSection : VBoxContainer
 
         if (localInfos.Count == 0 && rootManifests.Count == 0)
         {
-            SetStatus(
-                "No local mods installed. Tap \"Import Mod\" and pick one or more .zip files.",
-                InfoColor
+            SetStatus("", InfoColor);
+            _listContainer.AddChild(
+                Ui.MakeEmptyState(
+                    null,
+                    "No local mods installed.",
+                    "Tap \"Import Mod (.zip)\", or subscribe on the WORKSHOP tab.",
+                    _scale
+                )
             );
             return;
         }

@@ -45,7 +45,7 @@ public class ModDetailDialog : ColorRect
         var box = new PanelContainer();
         box.MouseFilter = MouseFilterEnum.Stop;
         var boxStyle = new StyleBoxFlat();
-        boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
+        boxStyle.BgColor = Ui.SurfaceHigh;
         boxStyle.SetCornerRadiusAll((int)(8 * scale));
         boxStyle.SetContentMarginAll((int)(20 * scale));
         box.AddThemeStyleboxOverride("panel", boxStyle);
@@ -122,17 +122,14 @@ public class ModDetailDialog : ColorRect
 
         if (!string.IsNullOrEmpty(actionLabel) && actionCallback != null)
         {
-            var actionButton = new StyledButton(actionLabel, scale, fontSize: 13, height: 42);
-            actionButton.CustomMinimumSize = new Vector2((int)(130 * scale), (int)(42 * scale));
-            if (actionDanger)
-            {
-                var r = (int)(4 * scale);
-                var bw = Math.Max(1, (int)(2 * scale));
-                var danger = StyledButton.MakeOutline(new Color(0.85f, 0.3f, 0.3f), r, bw);
-                actionButton.AddThemeStyleboxOverride("normal", danger);
-                actionButton.AddThemeStyleboxOverride("hover", danger);
-                actionButton.AddThemeStyleboxOverride("pressed", danger);
-            }
+            var actionButton = new StyledButton(
+                actionLabel,
+                scale,
+                fontSize: 13,
+                height: 48,
+                variant: actionDanger ? ButtonVariant.Danger : ButtonVariant.Primary
+            );
+            actionButton.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(48 * scale));
             actionButton.Pressed += () =>
             {
                 QueueFree();
@@ -141,8 +138,14 @@ public class ModDetailDialog : ColorRect
             buttonRow.AddChild(actionButton);
         }
 
-        var closeButton = new StyledButton("CLOSE", scale, fontSize: 13, height: 42);
-        closeButton.CustomMinimumSize = new Vector2((int)(130 * scale), (int)(42 * scale));
+        var closeButton = new StyledButton(
+            "CLOSE",
+            scale,
+            fontSize: 13,
+            height: 48,
+            variant: ButtonVariant.Ghost
+        );
+        closeButton.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(48 * scale));
         closeButton.Pressed += QueueFree;
         buttonRow.AddChild(closeButton);
     }

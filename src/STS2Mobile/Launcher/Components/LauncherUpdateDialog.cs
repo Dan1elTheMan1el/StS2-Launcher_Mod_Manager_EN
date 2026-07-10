@@ -23,7 +23,7 @@ public class LauncherUpdateDialog : ColorRect
 
         var dialogBox = new PanelContainer();
         var boxStyle = new StyleBoxFlat();
-        boxStyle.BgColor = new Color(0.15f, 0.15f, 0.18f);
+        boxStyle.BgColor = Ui.SurfaceHigh;
         boxStyle.SetCornerRadiusAll((int)(8 * scale));
         boxStyle.SetContentMarginAll((int)(24 * scale));
         dialogBox.AddThemeStyleboxOverride("panel", boxStyle);
