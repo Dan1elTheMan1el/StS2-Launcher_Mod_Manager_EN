@@ -53,6 +53,23 @@ public static class WorkshopInstaller
         }
     }
 
+    // Clears leftovers in Mods/.downloading from a previous app session that was
+    // killed mid-download. Call once when the download queue is (re)created —
+    // nothing can be in flight at that moment, so everything in there is stale.
+    public static void CleanStaleDownloads()
+    {
+        try
+        {
+            var root = Path.Combine(AppPaths.ExternalModsDir, ".downloading");
+            if (!Directory.Exists(root))
+                return;
+            foreach (var dir in Directory.EnumerateDirectories(root))
+                TryDeleteDir(dir);
+            PatchHelper.Log("[Workshop] Cleared stale download staging.");
+        }
+        catch { }
+    }
+
     // Downloads the item into Mods/.downloading/<id>/, installs it, then removes
     // the temp dir. This is the single entry point the sync/browser layers call.
     public static async Task<WorkshopInstallResult> DownloadAndInstallAsync(
@@ -161,6 +178,23 @@ public static class WorkshopInstaller
                 && existing.IsWorkshop
                 && existing.PublishedFileId == item.PublishedFileId;
 
+            // Our own prior copy, but currently stashed (ModsDisabled/): installing
+            // now would create an ENABLED duplicate next to the stashed one and
+            // silently un-stash the mod. The user disables on purpose — respect it.
+            if (sameId != null && sameId.Disabled && ourPriorCopy)
+            {
+                PatchHelper.Log(
+                    $"[Workshop] Item {item.PublishedFileId}: '{manifest.Id}' is stashed "
+                        + "(disabled) — not installing over it."
+                );
+                return new WorkshopInstallResult
+                {
+                    Success = false,
+                    ModId = manifest.Id,
+                    Error = "Mod is disabled (stashed). Enable it first, then update.",
+                };
+            }
+
             if (sameId != null && !ourPriorCopy)
             {
                 var installedVersion = sameId.Manifest?.Version ?? "?";
@@ -191,7 +225,11 @@ public static class WorkshopInstaller
             Directory.CreateDirectory(AppPaths.ExternalModsDir);
             if (Directory.Exists(dest))
                 Directory.Delete(dest, recursive: true);
-            CopyDirectory(modRoot, dest);
+            // Commit by rename, not by copy: a copy interrupted by app death leaves
+            // a half-written mod the game would happily load. A same-volume move is
+            // near-atomic; if death lands between the delete above and this move,
+            // the mod is simply absent and the next sync re-downloads it.
+            Directory.Move(modRoot, dest);
 
             // Upsert the registry entry, preserving user enabled/order for updates.
             if (existing == null)
@@ -222,15 +260,6 @@ public static class WorkshopInstaller
             PatchHelper.Log($"[Workshop] Install failed for {item.PublishedFileId}: {ex}");
             return new WorkshopInstallResult { Success = false, Error = ex.Message };
         }
-    }
-
-    private static void CopyDirectory(string src, string dest)
-    {
-        Directory.CreateDirectory(dest);
-        foreach (var file in Directory.EnumerateFiles(src))
-            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
-        foreach (var sub in Directory.EnumerateDirectories(src))
-            CopyDirectory(sub, Path.Combine(dest, Path.GetFileName(sub)));
     }
 
     private static bool IsValidId(string id)

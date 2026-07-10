@@ -65,6 +65,12 @@ public class WorkshopSyncPlan
     // user the Workshop copy isn't being applied.
     public List<WorkshopConflictItem> Conflicts = new();
 
+    // Subscribed items that are stashed (disabled) locally AND have a newer
+    // version on the Workshop. Deliberately NOT downloaded — installing would
+    // land in Mods/ and silently un-stash them. The UI badges these and asks for
+    // consent when the user enables the mod (issue #58 stash policy).
+    public List<WorkshopItemDetails> DisabledUpdates = new();
+
     public bool HasInstallWork => ToInstall.Count > 0 || ToUpdate.Count > 0;
     public bool HasOrphans => Orphans.Count > 0;
     public bool HasAnyWork =>
@@ -144,7 +150,11 @@ public static class WorkshopSyncService
         var cfg = ModConfig.Load();
         var scanned = ModScanner.Scan();
         var installedIds = new HashSet<string>(
-            scanned.Where(e => e.Id != null).Select(e => e.Id),
+            scanned.Where(e => e.Id != null && !e.Disabled).Select(e => e.Id),
+            StringComparer.Ordinal
+        );
+        var disabledIds = new HashSet<string>(
+            scanned.Where(e => e.Id != null && e.Disabled).Select(e => e.Id),
             StringComparer.Ordinal
         );
         var byId = scanned
@@ -159,7 +169,8 @@ public static class WorkshopSyncService
             id => byId.TryGetValue(id, out var e) && e.Manifest?.DisplayName != null
                 ? e.Manifest.DisplayName
                 : id,
-            cfg.ConflictRecords
+            cfg.ConflictRecords,
+            disabledIds
         );
 
         // Fill the installed (manual) version from the live scan so the UI can
@@ -194,9 +205,11 @@ public static class WorkshopSyncService
         IEnumerable<ModConfigEntry> localEntries,
         ISet<string> installedFolderIds,
         Func<string, string> displayNameResolver = null,
-        IReadOnlyList<WorkshopConflictEntry> conflicts = null
+        IReadOnlyList<WorkshopConflictEntry> conflicts = null,
+        ISet<string> disabledFolderIds = null
     )
     {
+        disabledFolderIds ??= new HashSet<string>(StringComparer.Ordinal);
         var plan = new WorkshopSyncPlan();
         displayNameResolver ??= id => id;
 
@@ -241,6 +254,16 @@ public static class WorkshopSyncService
             localByPfid.TryGetValue(sub.PublishedFileId, out var entry);
             bool folderPresent = entry != null && installedFolderIds.Contains(entry.Id);
 
+            // Stashed (disabled) locally: never download — the install would land in
+            // Mods/ and silently un-stash the mod. If the Workshop copy is newer,
+            // record it so the UI can badge it and ask on enable.
+            if (entry != null && !folderPresent && disabledFolderIds.Contains(entry.Id))
+            {
+                if (sub.TimeUpdated > entry.TimeUpdated)
+                    plan.DisabledUpdates.Add(sub);
+                continue;
+            }
+
             // Known id-collision with an already-installed mod: don't re-download
             // unless the item has been updated on Steam since we last saw it
             // (time_updated advanced). Prevents the every-visit re-download loop
@@ -282,7 +305,9 @@ public static class WorkshopSyncService
                 DisplayName = displayNameResolver(entry.Id),
             };
 
-            if (installedFolderIds.Contains(entry.Id))
+            // A stashed folder counts as present too — unsubscribing while disabled
+            // still needs the (confirmed) folder cleanup, just from ModsDisabled/.
+            if (installedFolderIds.Contains(entry.Id) || disabledFolderIds.Contains(entry.Id))
                 plan.Orphans.Add(mod); // folder present → delete after confirmation
             else
                 plan.StaleEntries.Add(mod); // folder already gone → entry cleanup only
@@ -535,19 +560,22 @@ public static class WorkshopSyncService
         {
             try
             {
-                // Workshop mods are always installed as Mods/<id>, so the folder is
-                // the id — but re-verify it resolves to a direct child of Mods before
-                // deleting, guarding against a hostile id escaping the tree.
-                var dir = Path.Combine(AppPaths.ExternalModsDir, mod.Id);
-                if (!AppPaths.IsDirectChildOfModsDir(dir))
+                // The mod may live in Mods/ OR in the stash (ModsDisabled/) — check
+                // both roots. Each candidate is re-verified as a direct child of its
+                // root before deleting, guarding against an id escaping the tree.
+                foreach (var root in new[] { AppPaths.ExternalModsDir, AppPaths.DisabledModsDir })
                 {
-                    PatchHelper.Log(
-                        $"[Workshop] Refusing to delete '{dir}': not a direct child of Mods."
-                    );
-                    return false;
+                    var dir = Path.Combine(root, mod.Id);
+                    if (!AppPaths.IsDirectChildOf(root, dir))
+                    {
+                        PatchHelper.Log(
+                            $"[Workshop] Refusing to delete '{dir}': not a direct child of {root}."
+                        );
+                        return false;
+                    }
+                    if (Directory.Exists(dir))
+                        Directory.Delete(dir, recursive: true);
                 }
-                if (Directory.Exists(dir))
-                    Directory.Delete(dir, recursive: true);
             }
             catch (Exception ex)
             {

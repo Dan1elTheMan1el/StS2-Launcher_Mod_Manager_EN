@@ -3,17 +3,32 @@ using Godot;
 
 namespace STS2Mobile.Launcher.Components;
 
-// One row in the Mod Hub's SUBSCRIBED tab (issue #58 phase 4b). No toggle/reorder
-// (that's the game's job now, see ModListRow) — just title/version/status and an
-// UNSUBSCRIBE button that unsubscribes on Steam and removes the local install.
+// One row in the Mod Hub's SUBSCRIBED tab (issue #58). Title/status plus up to
+// three actions with fixed semantics-to-color mapping:
+//   ENABLE  (accent outline) — restore from the stash, file move only
+//   DISABLE (secondary)      — move to the stash, non-destructive
+//   UNSUBSCRIBE (danger)     — deletes files; confirm-gated by the pane
+// A stashed row renders dimmed so the inactive state reads at a glance.
 public class SubscribedModRow : PanelContainer
 {
     public event Action UnsubscribePressed;
+    public event Action ToggleStashPressed; // fires for both ENABLE and DISABLE
     public event Action DetailRequested;
 
-    public SubscribedModRow(string title, string version, string status, bool statusIsError, float scale)
+    public SubscribedModRow(
+        string title,
+        string version,
+        string status,
+        bool statusIsError,
+        float scale,
+        bool disabled = false,
+        bool showStashToggle = false
+    )
     {
-        AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
+        AddThemeStyleboxOverride(
+            "panel",
+            disabled ? Ui.CardStyle(scale, Ui.CardDown) : Ui.CardStyle(scale)
+        );
 
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
@@ -35,16 +50,33 @@ public class SubscribedModRow : PanelContainer
             align: HorizontalAlignment.Left
         );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        if (disabled)
+            titleLabel.AddThemeColorOverride("font_color", Ui.TextDisabled);
         vbox.AddChild(titleLabel);
 
         var statusLabel = new StyledLabel(status, scale, fontSize: Ui.FontCaption, align: HorizontalAlignment.Left);
         statusLabel.AddThemeColorOverride(
             "font_color",
             statusIsError ? Ui.Danger
+            : disabled ? Ui.TextDisabled
             : status == "Installed" ? Ui.Success
             : Ui.TextSecondary
         );
         vbox.AddChild(statusLabel);
+
+        if (showStashToggle)
+        {
+            var stashButton = new StyledButton(
+                disabled ? "ENABLE" : "DISABLE",
+                scale,
+                fontSize: Ui.FontCaption,
+                height: 44,
+                variant: disabled ? ButtonVariant.Accent : ButtonVariant.Secondary
+            );
+            stashButton.CustomMinimumSize = new Vector2((int)(130 * scale), (int)(44 * scale));
+            stashButton.Pressed += () => ToggleStashPressed?.Invoke();
+            row.AddChild(stashButton);
+        }
 
         var unsubButton = new StyledButton(
             "UNSUBSCRIBE",
@@ -57,7 +89,7 @@ public class SubscribedModRow : PanelContainer
         unsubButton.Pressed += () => UnsubscribePressed?.Invoke();
         row.AddChild(unsubButton);
 
-        // Tapping the row body (not the button) opens the detail page; drags
+        // Tapping the row body (not the buttons) opens the detail page; drags
         // fall through to the ScrollContainer so the list stays scrollable.
         TapGesture.Attach(this, () => DetailRequested?.Invoke());
     }

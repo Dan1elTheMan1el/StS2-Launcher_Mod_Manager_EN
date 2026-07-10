@@ -17,20 +17,35 @@ public static class ModScanner
     // would flood logcat. Warn once per unique path per session.
     private static readonly HashSet<string> _warnedPaths = new(StringComparer.Ordinal);
 
+    // Scans BOTH roots: Mods/ (enabled — what the game loads) and ModsDisabled/
+    // (the stash — invisible to the game). Enabled mods are scanned first so on a
+    // duplicate id the enabled copy wins and the stashed one is warn-skipped.
     public static List<ModEntryInfo> Scan()
     {
         var results = new List<ModEntryInfo>();
-        if (!Directory.Exists(AppPaths.ExternalModsDir))
-            return results;
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
 
         WarnRootLevelManifests();
+        ScanRoot(AppPaths.ExternalModsDir, disabled: false, seenIds, results);
+        ScanRoot(AppPaths.DisabledModsDir, disabled: true, seenIds, results);
+        return results;
+    }
 
-        var seenIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var topDir in Directory.EnumerateDirectories(AppPaths.ExternalModsDir))
+    private static void ScanRoot(
+        string root,
+        bool disabled,
+        HashSet<string> seenIds,
+        List<ModEntryInfo> results
+    )
+    {
+        if (!Directory.Exists(root))
+            return;
+
+        foreach (var topDir in Directory.EnumerateDirectories(root))
         {
-            // Skip the Workshop download staging area — it holds partial payloads,
-            // not an installed mod.
-            if (Path.GetFileName(topDir) == ".downloading")
+            // Skip staging areas (".downloading" and any future dot-dirs) — they
+            // hold partial payloads, not installed mods.
+            if (Path.GetFileName(topDir).StartsWith("."))
                 continue;
 
             foreach (var (manifest, manifestPath) in ModManifest.EnumerateManifests(topDir))
@@ -56,12 +71,11 @@ public static class ModScanner
                         TopLevelDir = topDir,
                         Manifest = manifest,
                         ReadmeSnippet = LoadReadmeSnippet(manifestDir),
+                        Disabled = disabled,
                     }
                 );
             }
         }
-
-        return results;
     }
 
     // A "*.json" manifest sitting directly in Mods/ (not inside a folder) is loaded

@@ -14,6 +14,13 @@ public static class AppPaths
     // and surprising fresh installers, so it's intentionally not implemented.
     public const string ExternalRoot = "/storage/emulated/0/StS2LauncherMM";
     public const string ExternalModsDir = ExternalRoot + "/Mods";
+
+    // Issue #58 stash: disabled mods live in a SIBLING of Mods/, never inside it —
+    // the game's ModManager recursively scans everything under Mods/, so any
+    // "disabled" subfolder there would still be loaded. Moving a top-level mod
+    // folder between these two roots is the entire enable/disable mechanism
+    // (same volume ⇒ instant rename, no re-download).
+    public const string DisabledModsDir = ExternalRoot + "/ModsDisabled";
     public const string ExternalSaveBackupsDir = ExternalRoot + "/Saves";
     public const string ExternalLogsDir = ExternalRoot + "/Logs";
 
@@ -58,16 +65,19 @@ public static class AppPaths
     // ".." would make Path.Combine(ExternalModsDir, id) resolve to the parent — a
     // catastrophic recursive delete). Callers must gate every mod-folder delete on
     // this (issue #58: folder name may differ from id, so deletes are path-based).
-    public static bool IsDirectChildOfModsDir(string dir)
+    public static bool IsDirectChildOfModsDir(string dir) =>
+        IsDirectChildOf(ExternalModsDir, dir);
+
+    public static bool IsDirectChildOf(string root, string dir)
     {
-        if (string.IsNullOrEmpty(dir))
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(root))
             return false;
         try
         {
             var full = Path.GetFullPath(dir).TrimEnd('/', '\\');
-            var modsFull = Path.GetFullPath(ExternalModsDir).TrimEnd('/', '\\');
+            var rootFull = Path.GetFullPath(root).TrimEnd('/', '\\');
             var parent = Path.GetDirectoryName(full);
-            return parent != null && string.Equals(parent, modsFull, StringComparison.Ordinal);
+            return parent != null && string.Equals(parent, rootFull, StringComparison.Ordinal);
         }
         catch
         {
@@ -115,6 +125,11 @@ public static class AppPaths
         try
         {
             Directory.CreateDirectory(ExternalModsDir);
+        }
+        catch { }
+        try
+        {
+            Directory.CreateDirectory(DisabledModsDir);
         }
         catch { }
         try

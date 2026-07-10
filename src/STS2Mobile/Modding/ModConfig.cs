@@ -72,7 +72,12 @@ public class ModConfig
         {
             Directory.CreateDirectory(AppPaths.ExternalModsDir);
             var json = JsonSerializer.Serialize(this, Options);
-            File.WriteAllText(AppPaths.ExternalModConfigFile, json);
+            // Atomic write: a WriteAllText interrupted by app death truncates the
+            // registry, which Load() would then treat as "no config" — wiping all
+            // workshop provenance. Write to a temp file and rename over instead.
+            var tmp = AppPaths.ExternalModConfigFile + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, AppPaths.ExternalModConfigFile, overwrite: true);
         }
         catch (System.Exception ex)
         {
@@ -80,19 +85,25 @@ public class ModConfig
         }
     }
 
-    // Reconciles the on-disk scan with saved config: config entries that no longer
-    // exist are dropped, newly scanned mods are appended as enabled at the end.
-    // Returns the reconciled (and saved) entries sorted by Order, filtered to mods
-    // that exist on disk.
-    public List<ModConfigEntry> Reconcile(IEnumerable<string> scannedIds)
+    // Reconciles the on-disk scan (BOTH roots — Mods/ and ModsDisabled/) with the
+    // saved config. Disk is the source of truth (issue #58): entries whose folder
+    // exists in neither root are dropped, newly discovered mods are appended, and
+    // each entry's Disabled flag is (re)derived from which root its folder is in.
+    // Returns the reconciled (and saved) entries sorted by Order.
+    public List<ModConfigEntry> Reconcile(IEnumerable<ModEntryInfo> scanned)
     {
-        var present = new HashSet<string>(scannedIds);
+        var scanById = new Dictionary<string, ModEntryInfo>(System.StringComparer.Ordinal);
+        foreach (var s in scanned)
+        {
+            if (s?.Id != null && !scanById.ContainsKey(s.Id))
+                scanById[s.Id] = s;
+        }
 
-        Mods = Mods.Where(m => present.Contains(m.Id)).ToList();
+        Mods = Mods.Where(m => m.Id != null && scanById.ContainsKey(m.Id)).ToList();
 
         var known = new HashSet<string>(Mods.Select(m => m.Id));
         var nextOrder = Mods.Count == 0 ? 0 : Mods.Max(m => m.Order) + 1;
-        foreach (var id in scannedIds)
+        foreach (var id in scanById.Keys)
         {
             if (known.Add(id))
                 Mods.Add(
@@ -104,6 +115,9 @@ public class ModConfig
                     }
                 );
         }
+
+        foreach (var m in Mods)
+            m.Disabled = scanById[m.Id].Disabled;
 
         Mods = Mods.OrderBy(m => m.Order).ToList();
         for (int i = 0; i < Mods.Count; i++)
@@ -199,6 +213,13 @@ public class ModConfigEntry
     [JsonPropertyName("timeUpdated")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public long TimeUpdated { get; set; }
+
+    // DERIVED from disk on every Reconcile — true when the mod's folder currently
+    // lives under ModsDisabled/ (the stash). Never authoritative: if this and the
+    // folder location disagree, the folder wins and this gets rewritten.
+    [JsonPropertyName("disabled")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Disabled { get; set; }
 
     [JsonIgnore]
     public bool IsWorkshop => Source == SourceWorkshop;

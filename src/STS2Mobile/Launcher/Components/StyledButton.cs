@@ -12,6 +12,7 @@ public enum ButtonVariant
     Primary, // filled accent — THE action of the view
     Danger, // red outline — destructive, still needs a confirm dialog
     Ghost, // borderless, text-only chrome (tabs, back, tertiary)
+    Accent, // accent outline — positive restore/secondary-affirmative (ENABLE)
 }
 
 public class StyledButton : Button
@@ -65,6 +66,21 @@ public class StyledButton : Button
                 );
                 AddThemeStyleboxOverride("disabled", Ui.Outline(scale, Ui.Divider));
                 SetFontColors(Ui.Danger, Ui.TextDisabled);
+                break;
+
+            case ButtonVariant.Accent:
+                AddThemeStyleboxOverride("normal", Ui.Outline(scale, Ui.Accent));
+                AddThemeStyleboxOverride("hover", Ui.Outline(scale, Ui.AccentHover));
+                AddThemeStyleboxOverride(
+                    "pressed",
+                    Ui.Outline(
+                        scale,
+                        Ui.Accent,
+                        bg: new Color(Ui.Accent.R, Ui.Accent.G, Ui.Accent.B, 0.18f)
+                    )
+                );
+                AddThemeStyleboxOverride("disabled", Ui.Outline(scale, Ui.Divider));
+                SetFontColors(Ui.Accent, Ui.TextDisabled);
                 break;
 
             case ButtonVariant.Ghost:

@@ -20,7 +20,9 @@ public class ModDetailDialog : ColorRect
         float scale,
         string actionLabel = null,
         Action actionCallback = null,
-        bool actionDanger = false
+        bool actionDanger = false,
+        string action2Label = null,
+        Action action2Callback = null
     )
     {
         SetAnchorsPreset(LayoutPreset.FullRect);
@@ -119,6 +121,26 @@ public class ModDetailDialog : ColorRect
         buttonRow.AddThemeConstantOverride("separation", (int)(10 * scale));
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
+
+        // Optional second action (e.g. Disable/Enable next to Remove) — rendered
+        // first so the destructive primary action stays right-most.
+        if (!string.IsNullOrEmpty(action2Label) && action2Callback != null)
+        {
+            var action2Button = new StyledButton(
+                action2Label,
+                scale,
+                fontSize: 13,
+                height: 48,
+                variant: ButtonVariant.Accent
+            );
+            action2Button.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(48 * scale));
+            action2Button.Pressed += () =>
+            {
+                QueueFree();
+                action2Callback();
+            };
+            buttonRow.AddChild(action2Button);
+        }
 
         if (!string.IsNullOrEmpty(actionLabel) && actionCallback != null)
         {

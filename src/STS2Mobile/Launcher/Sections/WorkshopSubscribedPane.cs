@@ -29,6 +29,7 @@ public class WorkshopSubscribedPane : VBoxContainer
     private SteamConnection _connection;
     private WorkshopDownloadQueue _queue;
     private HashSet<ulong> _updateAvailablePfids = new();
+    private Dictionary<ulong, WorkshopItemDetails> _disabledUpdatesByPfid = new();
     private List<WorkshopConflictItem> _conflicts = new();
     private Func<Task<(bool ok, SteamConnection conn)>> _ensureSession;
     private bool _loggedIn;
@@ -122,6 +123,7 @@ public class WorkshopSubscribedPane : VBoxContainer
                 _queue.Enqueue(item);
         }
         _updateAvailablePfids = new HashSet<ulong>(plan.ToUpdate.Select(i => i.PublishedFileId));
+        _disabledUpdatesByPfid = plan.DisabledUpdates.ToDictionary(i => i.PublishedFileId, i => i);
         _conflicts = plan.Conflicts;
 
         // Tell the user what auto-download just started (issue #58): a scrollable
@@ -296,6 +298,8 @@ public class WorkshopSubscribedPane : VBoxContainer
         {
             scannedById.TryGetValue(entry.Id, out var info);
             queueByPfid.TryGetValue(entry.PublishedFileId, out var qEntry);
+            bool disabled = info?.Disabled ?? entry.Disabled;
+            bool disabledUpdate = _disabledUpdatesByPfid.ContainsKey(entry.PublishedFileId);
 
             string status;
             bool isError = false;
@@ -308,6 +312,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             }
             else if (qEntry != null && qEntry.State == WorkshopDownloadState.Queued)
                 status = "Queued";
+            else if (disabled)
+                status = disabledUpdate
+                    ? "Disabled · update available — enable to download"
+                    : "Disabled";
             else if (_updateAvailablePfids.Contains(entry.PublishedFileId))
                 status = "Update available";
             else if (info != null)
@@ -317,15 +325,81 @@ public class WorkshopSubscribedPane : VBoxContainer
 
             var title = info?.Manifest?.DisplayName ?? entry.Id;
             var version = info?.Manifest?.Version;
-            var row = new SubscribedModRow(title, version, status, isError, _scale);
+            var row = new SubscribedModRow(
+                title,
+                version,
+                status,
+                isError,
+                _scale,
+                disabled: disabled,
+                showStashToggle: info != null
+            );
             var capturedEntry = entry;
             var capturedInfo = info;
             row.UnsubscribePressed += () => OnUnsubscribePressed(capturedEntry);
+            row.ToggleStashPressed += () => OnToggleStashPressed(capturedEntry, capturedInfo);
             row.DetailRequested += () => ShowSubscribedDetail(capturedEntry, capturedInfo);
             _list.AddChild(row);
         }
 
         RenderConflicts();
+    }
+
+    // DISABLE: move to the stash immediately (non-destructive). ENABLE: move back,
+    // then — per the approved policy — if the Workshop has a newer version, ask
+    // before downloading it; declining leaves the current files enabled (the next
+    // sync of an ENABLED mod auto-updates as usual, and the dialog says so).
+    private void OnToggleStashPressed(ModConfigEntry entry, ModEntryInfo info)
+    {
+        if (info == null)
+            return;
+
+        if (!info.Disabled)
+        {
+            var (ok, error) = ModStasher.Disable(info);
+            SetStatus(ok ? $"'{entry.Id}' disabled (stashed)." : error, ok ? InfoColor : WarnColor);
+            RefreshRegistryAndRender();
+            return;
+        }
+
+        var (enOk, enError) = ModStasher.Enable(info);
+        if (!enOk)
+        {
+            SetStatus(enError, WarnColor);
+            RefreshRegistryAndRender();
+            return;
+        }
+        SetStatus($"'{entry.Id}' enabled.", InfoColor);
+        RefreshRegistryAndRender();
+
+        if (_disabledUpdatesByPfid.TryGetValue(entry.PublishedFileId, out var updatedItem))
+        {
+            ConfirmationRequested?.Invoke(
+                $"A newer Workshop version of '{entry.Id}' is available. Download it now?\n"
+                    + "(Later: it will auto-update on the next sync.)",
+                () =>
+                {
+                    _disabledUpdatesByPfid.Remove(entry.PublishedFileId);
+                    _queue?.Enqueue(updatedItem);
+                    RunOnMain(RenderList);
+                },
+                null
+            );
+        }
+    }
+
+    // Re-derives registry state from disk (the source of truth) and re-renders.
+    private void RefreshRegistryAndRender()
+    {
+        try
+        {
+            ModConfig.Load().Reconcile(ModScanner.Scan());
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] Reconcile after stash toggle failed: {ex.Message}");
+        }
+        RunOnMain(RenderList);
     }
 
     // Subscribed items whose mod id is also installed manually. The Workshop copy

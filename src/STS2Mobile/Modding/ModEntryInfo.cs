@@ -16,5 +16,9 @@ public class ModEntryInfo
     public ModManifest Manifest { get; set; }
     public string ReadmeSnippet { get; set; }
 
+    // True when the mod lives under AppPaths.DisabledModsDir (the stash) instead
+    // of Mods/ — the game can't see it there. Derived from disk, never stored.
+    public bool Disabled { get; set; }
+
     public string Id => Manifest?.Id;
 }

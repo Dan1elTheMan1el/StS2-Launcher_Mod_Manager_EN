@@ -445,6 +445,8 @@ public class WorkshopBrowserPane : VBoxContainer
             return (null, false);
         if (_installedByPfid.TryGetValue(item.PublishedFileId, out var entry))
         {
+            if (entry.Disabled)
+                return ("Disabled", true);
             return item.TimeUpdated > entry.TimeUpdated
                 ? ("Update available", true)
                 : ("Installed", true);

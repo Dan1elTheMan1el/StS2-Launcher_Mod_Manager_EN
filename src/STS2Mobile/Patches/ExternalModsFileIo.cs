@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using MegaCrit.Sts2.Core.Modding;
 using GodotFileAccess = Godot.FileAccess;
 
@@ -82,9 +83,15 @@ public sealed class ExternalModsFileIo : IModManagerFileIo
             return _inner?.GetDirectoriesAt(path) ?? Array.Empty<string>();
         try
         {
-            return Directory.Exists(redirected)
-                ? Directory.GetDirectories(redirected)
-                : Array.Empty<string>();
+            if (!Directory.Exists(redirected))
+                return Array.Empty<string>();
+            // Hide launcher staging dirs (".downloading" etc.) from the game's
+            // recursive mod scan — without this filter, booting the game during a
+            // Workshop download lets it load a half-written mod payload (issue #58).
+            return Directory
+                .EnumerateDirectories(redirected)
+                .Where(d => !System.IO.Path.GetFileName(d).StartsWith("."))
+                .ToArray();
         }
         catch (Exception ex)
         {

@@ -109,14 +109,16 @@ public class WorkshopBrowseCard : PanelContainer
             {
                 "Installed" => Ui.Success,
                 "Update available" => Ui.Warn,
+                "Disabled" => Ui.TextDisabled,
                 _ => Ui.Accent,
             }
         );
 
-        // Filled accent while the item is actionable; once subscribed the card's
-        // action becomes destructive-ish and recedes to a quiet secondary button
-        // (Von Restorff — keep the filled accent rare).
+        // SUBSCRIBE is the filled accent (the card's constructive action); once
+        // subscribed the action becomes UNSUBSCRIBE, which deletes local files —
+        // destructive actions read as Danger EVERYWHERE, same as the SUBSCRIBED
+        // tab (user report: the two screens disagreed).
         _actionButton.Text = subscribed ? "UNSUBSCRIBE" : "SUBSCRIBE";
-        _actionButton.ApplyVariant(_scale, subscribed ? ButtonVariant.Secondary : ButtonVariant.Primary);
+        _actionButton.ApplyVariant(_scale, subscribed ? ButtonVariant.Danger : ButtonVariant.Primary);
     }
 }

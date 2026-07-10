@@ -298,6 +298,9 @@ public class ModManagerSection : VBoxContainer
         {
             if (_queue == null)
             {
+                // Nothing can be in flight at queue creation, so anything left in
+                // the staging dir is a leftover from a killed session — clear it.
+                WorkshopInstaller.CleanStaleDownloads();
                 var q = new WorkshopDownloadQueue(_model.Connection);
                 q.Changed += OnQueueChanged;
                 _queue = q;
@@ -379,10 +382,9 @@ public class ModManagerSection : VBoxContainer
         var scanned = ModScanner.Scan();
         var cfg = ModConfig.Load();
         // Reconcile keeps the registry (mod_config.json) in sync with what's on
-        // disk; enabled/order are no longer read by this UI (see class comment on
-        // ModListRow), but the game itself still relies on Reconcile pruning
-        // stale entries.
-        cfg.Reconcile(scanned.Select(m => m.Id));
+        // disk — including deriving each entry's disabled state from which root
+        // (Mods/ vs ModsDisabled/) its folder lives in. Disk is the truth.
+        cfg.Reconcile(scanned);
 
         var localInfos = scanned
             .Where(m =>
@@ -390,7 +392,8 @@ public class ModManagerSection : VBoxContainer
                 var entry = cfg.Get(m.Id);
                 return entry == null || !entry.IsWorkshop;
             })
-            .OrderBy(m => m.Manifest.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m.Disabled)
+            .ThenBy(m => m.Manifest.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var rootManifests = ScanRootLevelManifests();
 
@@ -421,7 +424,7 @@ public class ModManagerSection : VBoxContainer
             )
                 warning = $"Requires game {info.Manifest.MinGameVersion}+";
 
-            var row = new ModListRow(info, _scale);
+            var row = new ModListRow(info, _scale, badge: info.Disabled ? "Disabled" : null);
             var capturedInfo = info;
             var capturedWarning = warning;
             row.DetailRequested += () => ShowLocalDetail(capturedInfo, capturedWarning, removable: true);
@@ -476,9 +479,24 @@ public class ModManagerSection : VBoxContainer
             _scale,
             actionLabel: removable ? "Remove Mod" : null,
             actionCallback: removable ? () => OnRowRemovePressed(info) : null,
-            actionDanger: true
+            actionDanger: true,
+            action2Label: removable ? (info.Disabled ? "Enable" : "Disable") : null,
+            action2Callback: removable ? () => OnLocalStashTogglePressed(info) : null
         );
         LauncherOverlay.Show(this, dialog);
+    }
+
+    // Stash toggle for a local mod: same folder-move mechanism as workshop mods.
+    private void OnLocalStashTogglePressed(ModEntryInfo info)
+    {
+        var (ok, error) = info.Disabled ? ModStasher.Enable(info) : ModStasher.Disable(info);
+        SetStatus(
+            ok
+                ? $"'{info.Id}' {(info.Disabled ? "enabled" : "disabled (stashed)")}."
+                : error,
+            ok ? InfoColor : WarnColor
+        );
+        RefreshLocal();
     }
 
     // Root-level "*.json" manifests directly under Mods/ (not inside a folder) are
