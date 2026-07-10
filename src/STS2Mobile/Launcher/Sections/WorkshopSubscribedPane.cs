@@ -294,18 +294,20 @@ public class WorkshopSubscribedPane : VBoxContainer
         foreach (var q in pending)
         {
             string status;
-            bool isError = false;
+            Color statusColor;
             switch (q.State)
             {
                 case WorkshopDownloadState.Downloading:
                     status = Loc.Tr($"다운로드 중 {q.ProgressPercent:F0}%", $"Downloading {q.ProgressPercent:F0}%");
+                    statusColor = InfoColor;
                     break;
                 case WorkshopDownloadState.Failed:
                     status = Loc.Tr($"실패: {q.Error}", $"Failed: {q.Error}");
-                    isError = true;
+                    statusColor = Ui.Danger;
                     break;
                 default:
                     status = Loc.Tr("대기 중", "Queued");
+                    statusColor = InfoColor;
                     break;
             }
 
@@ -314,7 +316,7 @@ public class WorkshopSubscribedPane : VBoxContainer
                 string.IsNullOrEmpty(item.Title) ? item.PublishedFileId.ToString() : item.Title,
                 null,
                 status,
-                isError,
+                statusColor,
                 _scale
             );
             row.UnsubscribePressed += () => OnUnsubscribePfidPressed(item);
@@ -332,41 +334,61 @@ public class WorkshopSubscribedPane : VBoxContainer
             bool disabled = info?.Disabled ?? entry.Disabled;
             bool disabledUpdate = _disabledUpdatesByPfid.ContainsKey(entry.PublishedFileId);
 
+            // Text and color come from the SAME branch so they never disagree —
+            // a lingering "Completed" queue entry no longer greys out an installed
+            // mod (the BaseLib-vs-SaveMerger report). A live queue entry only
+            // overrides while it's Downloading/Failed/Queued; once Completed it
+            // falls through to the on-disk state below.
             string status;
-            bool isError = false;
+            Color statusColor;
             if (qEntry != null && qEntry.State == WorkshopDownloadState.Downloading)
+            {
                 status = Loc.Tr($"다운로드 중 {qEntry.ProgressPercent:F0}%", $"Downloading {qEntry.ProgressPercent:F0}%");
+                statusColor = InfoColor;
+            }
             else if (qEntry != null && qEntry.State == WorkshopDownloadState.Failed)
             {
                 status = Loc.Tr($"실패: {qEntry.Error}", $"Failed: {qEntry.Error}");
-                isError = true;
+                statusColor = Ui.Danger;
             }
             else if (qEntry != null && qEntry.State == WorkshopDownloadState.Queued)
+            {
                 status = Loc.Tr("대기 중", "Queued");
+                statusColor = InfoColor;
+            }
             else if (disabled)
+            {
                 status = disabledUpdate
                     ? Loc.Tr("비활성 · 업데이트 있음 — 활성화 후 다운로드", "Disabled · update available — enable to download")
                     : Loc.Tr("비활성", "Disabled");
+                statusColor = Ui.TextDisabled;
+            }
             else if (_updateAvailablePfids.Contains(entry.PublishedFileId))
+            {
                 status = Loc.Tr("업데이트 있음", "Update available");
+                statusColor = Ui.Warn;
+            }
             else if (info != null)
+            {
                 status = Loc.Tr("설치됨", "Installed");
+                statusColor = Ui.Success;
+            }
             else
+            {
                 status = Loc.Tr("다운로드 대기", "Pending download");
+                statusColor = InfoColor;
+            }
 
             var title = info?.Manifest?.DisplayName ?? entry.Id;
             var version = info?.Manifest?.Version;
-            bool statusGood = !disabled && qEntry == null && info != null
-                && !_updateAvailablePfids.Contains(entry.PublishedFileId);
             var row = new SubscribedModRow(
                 title,
                 version,
                 status,
-                isError,
+                statusColor,
                 _scale,
                 disabled: disabled,
-                showStashToggle: info != null,
-                statusGood: statusGood
+                showStashToggle: info != null
             );
             var capturedEntry = entry;
             var capturedInfo = info;

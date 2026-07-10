@@ -19,11 +19,10 @@ public class SubscribedModRow : PanelContainer
         string title,
         string version,
         string status,
-        bool statusIsError,
+        Color statusColor,
         float scale,
         bool disabled = false,
-        bool showStashToggle = false,
-        bool statusGood = false
+        bool showStashToggle = false
     )
     {
         AddThemeStyleboxOverride(
@@ -57,13 +56,7 @@ public class SubscribedModRow : PanelContainer
         vbox.AddChild(titleLabel);
 
         var statusLabel = new StyledLabel(status, scale, fontSize: Ui.FontCaption, align: HorizontalAlignment.Left);
-        statusLabel.AddThemeColorOverride(
-            "font_color",
-            statusIsError ? Ui.Danger
-            : disabled ? Ui.TextDisabled
-            : statusGood ? Ui.Success
-            : Ui.TextSecondary
-        );
+        statusLabel.AddThemeColorOverride("font_color", statusColor);
         vbox.AddChild(statusLabel);
 
         if (showStashToggle)
