@@ -669,6 +669,7 @@ public class WorkshopSubscribedPane : VBoxContainer
 
     private void ShowSubscribedDetail(ModConfigEntry entry, ModEntryInfo info)
     {
+        PatchHelper.Log($"[Workshop] SUBSCRIBED row tapped -> detail: '{entry.Id}'");
         var m = info?.Manifest;
         var title = m?.DisplayName ?? entry.Id;
         var subtitle = string.Join(

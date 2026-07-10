@@ -16,10 +16,13 @@ public class StyledDialog : ColorRect
     public StyledDialog(
         string message,
         float scale,
-        string okLabel = "OK",
-        string cancelLabel = "Cancel"
+        string okLabel = null,
+        string cancelLabel = null
     )
     {
+        okLabel ??= Loc.Tr("확인", "OK");
+        cancelLabel ??= Loc.Tr("취소", "Cancel");
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
 
@@ -37,32 +40,34 @@ public class StyledDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(16 * scale));
         dialogBox.AddChild(vbox);
 
-        // Height-capped scroll so a long message can't push the buttons away.
         var scroll = new ScrollContainer();
         scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
-        scroll.CustomMinimumSize = new Vector2((int)(320 * scale), 0);
-        scroll.SizeFlagsVertical = SizeFlags.ShrinkCenter;
-        scroll.CustomMinimumSize = new Vector2((int)(320 * scale), (int)(0));
         vbox.AddChild(scroll);
 
         var label = new StyledLabel(message, scale, fontSize: 16);
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.CustomMinimumSize = new Vector2((int)(320 * scale), 0);
         label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        label.HorizontalAlignment = HorizontalAlignment.Center;
         scroll.AddChild(label);
 
-        // Cap the scroll viewport once laid out, so short messages stay compact
-        // and long ones scroll within ~60% of the screen height.
-        scroll.Resized += () =>
-        {
-            var vpH = scroll.GetViewport()?.GetVisibleRect().Size.Y ?? (1080f);
-            var cap = vpH * 0.6f;
-            var natural = label.GetCombinedMinimumSize().Y;
-            scroll.CustomMinimumSize = new Vector2(
-                (int)(320 * scale),
-                (int)Mathf.Min(cap, natural)
-            );
-        };
+        // Size the scroll to the message AFTER layout (deferred — a Resized handler
+        // fired too early and collapsed the scroll, clipping the text). Capped at
+        // 55% of the viewport so a long message scrolls and the buttons stay put.
+        Callable
+            .From(() =>
+            {
+                if (!IsInstanceValid(scroll) || !IsInstanceValid(label))
+                    return;
+                var vpH = scroll.GetViewport()?.GetVisibleRect().Size.Y ?? 1080f;
+                var cap = vpH * 0.55f;
+                var natural = label.GetCombinedMinimumSize().Y;
+                scroll.CustomMinimumSize = new Vector2(
+                    (int)(320 * scale),
+                    (int)Mathf.Min(natural, cap)
+                );
+            })
+            .CallDeferred();
 
         var buttonRow = new HBoxContainer();
         buttonRow.AddThemeConstantOverride("separation", (int)(12 * scale));

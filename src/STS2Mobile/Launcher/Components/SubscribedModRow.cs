@@ -38,6 +38,7 @@ public class SubscribedModRow : PanelContainer
 
         var vbox = new VBoxContainer();
         vbox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        vbox.MouseFilter = MouseFilterEnum.Ignore;
         vbox.AddThemeConstantOverride("separation", (int)(2 * scale));
         row.AddChild(vbox);
 

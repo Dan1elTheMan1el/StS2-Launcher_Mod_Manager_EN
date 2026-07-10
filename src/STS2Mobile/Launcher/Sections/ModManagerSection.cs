@@ -237,8 +237,11 @@ public class ModManagerSection : VBoxContainer
     // WORKSHOP/SUBSCRIBED/DOWNLOADS re-check the session and refresh).
     public void Refresh() => SelectTab(_activeTab);
 
+    private static readonly string[] TabLogNames = { "WORKSHOP", "SUBSCRIBED", "LOCAL", "DOWNLOADS" };
+
     private void SelectTab(int index)
     {
+        PatchHelper.Log($"[Mods] Tab -> {(index >= 0 && index < TabLogNames.Length ? TabLogNames[index] : index.ToString())}");
         _activeTab = index;
         for (int i = 0; i < _tabButtons.Length; i++)
         {
@@ -358,6 +361,7 @@ public class ModManagerSection : VBoxContainer
     private void OnOrientToggle()
     {
         _portrait = !_portrait;
+        PatchHelper.Log($"[Mods] Orientation -> {(_portrait ? "portrait" : "landscape")}");
         _orientButton.Text = _portrait ? Loc.Tr("⤢ 가로", "⤢ Landscape") : Loc.Tr("⤢ 세로", "⤢ Portrait");
         OrientationChangeRequested?.Invoke(_portrait);
     }
@@ -496,6 +500,7 @@ public class ModManagerSection : VBoxContainer
     // Full detail page for a local mod, opened by tapping its row.
     private void ShowLocalDetail(ModEntryInfo info, string warning, bool removable)
     {
+        PatchHelper.Log($"[Mods] LOCAL row tapped -> detail: '{info.Id}' (disabled={info.Disabled})");
         var m = info.Manifest;
         var subtitle = string.Join(
             " · ",

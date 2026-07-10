@@ -31,8 +31,10 @@ public class WorkshopBrowserPane : VBoxContainer
     private readonly StyledButton _tagsToggleButton;
     private readonly HFlowContainer _tagsPanel;
     private readonly StyledLabel _statusLabel;
+    private readonly ScrollContainer _scroll;
     private readonly VBoxContainer _resultsList;
     private readonly StyledButton _loadMoreButton;
+    private volatile bool _loading;
 
     private readonly HashSet<string> _selectedTags = new(StringComparer.Ordinal);
     private readonly HashSet<string> _knownTags = new(StringComparer.Ordinal);
@@ -124,15 +126,20 @@ public class WorkshopBrowserPane : VBoxContainer
         _tagsPanel.Visible = false;
         AddChild(_tagsPanel);
 
-        var scroll = new ScrollContainer();
-        scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
-        scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
-        AddChild(scroll);
+        _scroll = new ScrollContainer();
+        _scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
+        AddChild(_scroll);
+        // Infinite scroll (issue #58): auto-load the next page when the user nears
+        // the bottom, instead of a LOAD MORE button (kept only as a hidden fallback
+        // that a manual query path can still flip on).
+        _scroll.GetVScrollBar().Changed += MaybeAutoLoad;
+        _scroll.GetVScrollBar().ValueChanged += _ => MaybeAutoLoad();
 
         _resultsList = new VBoxContainer();
         _resultsList.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _resultsList.AddThemeConstantOverride("separation", (int)(6 * scale));
-        scroll.AddChild(_resultsList);
+        _scroll.AddChild(_resultsList);
 
         _loadMoreButton = new StyledButton("LOAD MORE", scale, fontSize: 13, height: Ui.TouchHeight);
         _loadMoreButton.Visible = false;
@@ -239,6 +246,23 @@ public class WorkshopBrowserPane : VBoxContainer
 
     private void OnLoadMorePressed() => _ = Task.Run(() => RunQueryAsync(resetPage: false));
 
+    // Fires on scroll/resize; loads the next page when the user is within ~1.5
+    // screens of the bottom and more results exist. Main thread (Godot signal).
+    private void MaybeAutoLoad()
+    {
+        if (_loading || _connection == null || _totalLoaded == 0 || _totalLoaded >= _totalAvailable)
+            return;
+        var vs = _scroll.GetVScrollBar();
+        if (vs.MaxValue <= 0)
+            return;
+        var remaining = vs.MaxValue - (vs.Value + vs.Page);
+        if (remaining <= vs.Page * 1.5)
+        {
+            PatchHelper.Log($"[Workshop] Auto-load next page ({_totalLoaded}/{_totalAvailable})");
+            _ = Task.Run(() => RunQueryAsync(resetPage: false));
+        }
+    }
+
     private async Task RunQueryAsync(bool resetPage)
     {
         if (_connection == null)
@@ -259,6 +283,10 @@ public class WorkshopBrowserPane : VBoxContainer
 
         var sort = (WorkshopQuerySort)_sortOption.GetSelectedId();
         var tags = _selectedTags.ToList();
+
+        if (_loading)
+            return;
+        _loading = true;
 
         if (resetPage)
         {
@@ -309,6 +337,7 @@ public class WorkshopBrowserPane : VBoxContainer
             if (resetPage)
                 _totalLoaded = 0;
             _totalLoaded += (uint)items.Count;
+            _page++; // advance so the next auto-load fetches the following page
 
             RunOnMain(() =>
             {
@@ -316,9 +345,10 @@ public class WorkshopBrowserPane : VBoxContainer
                     AddResultCard(item);
                 UpdateTagChips(items);
                 SetStatus(Loc.Tr($"{_totalLoaded} / {_totalAvailable}개","{_totalLoaded} / {_totalAvailable} item(s)"), InfoColor);
-                _loadMoreButton.Visible = _totalLoaded < _totalAvailable;
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
+                _loading = false;
+                MaybeAutoLoad(); // keep filling if the first page didn't reach the fold
             });
         }
         catch (Exception ex)
@@ -329,6 +359,7 @@ public class WorkshopBrowserPane : VBoxContainer
                 SetStatus(Loc.Tr($"검색 실패: {ex.Message}",$"Workshop query failed: {ex.Message}"), WarnColor);
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
+                _loading = false;
             });
         }
     }
@@ -445,12 +476,20 @@ public class WorkshopBrowserPane : VBoxContainer
     // Must run on the main thread — mutates Godot nodes.
     private void AddResultCard(WorkshopItemDetails item)
     {
+        // Dedupe: a paged/auto-load could re-emit an item (or the collapsed-query
+        // merge overlap) — one card per pfid.
+        if (_cardsByPfid.ContainsKey(item.PublishedFileId))
+            return;
         _itemsByPfid[item.PublishedFileId] = item;
         var (badge, subscribed) = DetermineStatus(item);
         var card = new WorkshopBrowseCard(item, _scale, badge, subscribed);
         card.SubscribeRequested += () => _ = Task.Run(() => OnSubscribeAsync(item.PublishedFileId));
         card.UnsubscribeRequested += () => _ = Task.Run(() => OnUnsubscribeAsync(item.PublishedFileId));
-        card.DetailRequested += () => ShowBrowseDetail(item);
+        card.DetailRequested += () =>
+        {
+            PatchHelper.Log($"[Workshop] Card tapped -> detail: {item.PublishedFileId} '{item.Title}'");
+            ShowBrowseDetail(item);
+        };
         _resultsList.AddChild(card);
         _cardsByPfid[item.PublishedFileId] = card;
 
@@ -525,6 +564,7 @@ public class WorkshopBrowserPane : VBoxContainer
     {
         if (_connection == null || !_itemsByPfid.TryGetValue(pfid, out var item))
             return;
+        PatchHelper.Log($"[Workshop] SUBSCRIBE tapped: {pfid} '{item.Title}'");
 
         if (item.FileSize > LargeDownloadWarningBytes)
         {
