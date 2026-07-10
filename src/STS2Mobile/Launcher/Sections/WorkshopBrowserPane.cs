@@ -130,10 +130,11 @@ public class WorkshopBrowserPane : VBoxContainer
         _scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
         _scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
         AddChild(_scroll);
-        // Infinite scroll (issue #58): auto-load the next page when the user nears
-        // the bottom, instead of a LOAD MORE button (kept only as a hidden fallback
-        // that a manual query path can still flip on).
-        _scroll.GetVScrollBar().Changed += MaybeAutoLoad;
+        // Infinite scroll (issue #58): auto-load the next page when the user scrolls
+        // near the bottom. Only the scrollbar's ValueChanged (actual scroll) is
+        // used — the Changed signal fires on every layout/card-add and caused a
+        // runaway auto-load loop that hammered the Steam connection (which in turn
+        // starved the URL/ID direct lookup, freezing it).
         _scroll.GetVScrollBar().ValueChanged += _ => MaybeAutoLoad();
 
         _resultsList = new VBoxContainer();
@@ -277,7 +278,17 @@ public class WorkshopBrowserPane : VBoxContainer
         // work here.
         if (TryParsePublishedFileId(searchText, out var directPfid))
         {
-            await RunDirectLookupAsync(directPfid).ConfigureAwait(false);
+            if (_loading)
+                return;
+            _loading = true;
+            try
+            {
+                await RunDirectLookupAsync(directPfid).ConfigureAwait(false);
+            }
+            finally
+            {
+                _loading = false;
+            }
             return;
         }
 
@@ -348,7 +359,6 @@ public class WorkshopBrowserPane : VBoxContainer
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
                 _loading = false;
-                MaybeAutoLoad(); // keep filling if the first page didn't reach the fold
             });
         }
         catch (Exception ex)
@@ -433,9 +443,20 @@ public class WorkshopBrowserPane : VBoxContainer
 
         try
         {
-            var items = await _connection
-                .GetPublishedFileDetailsAsync(new[] { pfid })
-                .ConfigureAwait(false);
+            // Bound the lookup so a stalled RPC can't leave the search box frozen
+            // on "Looking up item…" forever (user report).
+            var lookup = _connection.GetPublishedFileDetailsAsync(new[] { pfid });
+            var done = await Task.WhenAny(lookup, Task.Delay(15000)).ConfigureAwait(false);
+            if (done != lookup)
+            {
+                RunOnMain(() =>
+                {
+                    SetStatus(Loc.Tr("조회 시간 초과 — 다시 시도해 주세요.", "Lookup timed out — try again."), WarnColor);
+                    _searchButton.Disabled = false;
+                });
+                return;
+            }
+            var items = await lookup.ConfigureAwait(false);
             // A nonexistent/inaccessible id still yields a details row, just an
             // empty one — an absent Title is the "not found" signal.
             var item = items.FirstOrDefault(i =>
@@ -466,7 +487,7 @@ public class WorkshopBrowserPane : VBoxContainer
             PatchHelper.Log($"[Workshop] Direct lookup failed for {pfid}: {ex}");
             RunOnMain(() =>
             {
-                SetStatus($"Item lookup failed: {ex.Message}", WarnColor);
+                SetStatus(Loc.Tr($"조회 실패: {ex.Message}", $"Item lookup failed: {ex.Message}"), WarnColor);
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
             });

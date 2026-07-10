@@ -16,6 +16,7 @@ public class LauncherUI : Control
     private LauncherController _controller;
     private bool _inGameMode;
     private bool _windowScaleOverridden;
+    private int _origScrollDeadzone = -1;
     private Vector2I _origScaleSize;
     private Window.ContentScaleModeEnum _origScaleMode;
     private Window.ContentScaleAspectEnum _origScaleAspect;
@@ -32,6 +33,23 @@ public class LauncherUI : Control
     public void Initialize()
     {
         ZIndex = 100;
+
+        // Touch scrolling in the Mod Hub's lists was broken: each card sits under a
+        // full-area Button (for tap-to-detail), and with a zero deadzone a touch is
+        // treated as a button press before it can become a scroll drag, so the
+        // ScrollContainer never scrolls. A nonzero default_scroll_deadzone lets a
+        // drag past the threshold scroll while a stationary tap still clicks — the
+        // canonical Godot fix for tappable rows inside a scroll view (issue #58).
+        try
+        {
+            _origScrollDeadzone = (int)
+                ProjectSettings.GetSetting("gui/common/default_scroll_deadzone", 0);
+            ProjectSettings.SetSetting("gui/common/default_scroll_deadzone", 30);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] Failed to set scroll deadzone: {ex.Message}");
+        }
 
         // The game PCK's project.godot pins display/window/handheld/orientation to
         // landscape, which Godot applies at runtime and silently overrides the
@@ -167,6 +185,17 @@ public class LauncherUI : Control
     {
         GetTree().ProcessFrame -= OnProcessFrame;
         GetTree().AutoAcceptQuit = true;
+
+        // Restore the game's original scroll deadzone on launcher exit.
+        if (_origScrollDeadzone >= 0)
+        {
+            try
+            {
+                ProjectSettings.SetSetting("gui/common/default_scroll_deadzone", _origScrollDeadzone);
+            }
+            catch { }
+            _origScrollDeadzone = -1;
+        }
 
         // Hand the Window's content scale back to whatever the game set so the
         // launcher exit doesn't break the game's own UI sizing.
