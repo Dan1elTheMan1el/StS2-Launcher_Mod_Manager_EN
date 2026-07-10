@@ -27,6 +27,10 @@ public class ModManagerSection : VBoxContainer
     public event Action BackPressed;
     public event Action<string, Action, Action> ConfirmationRequested;
 
+    // Raised with true=portrait / false=landscape; the controller applies it to
+    // the launcher window and restores landscape when the hub closes.
+    public event Action<bool> OrientationChangeRequested;
+
     private const int TabWorkshop = 0;
     private const int TabSubscribed = 1;
     private const int TabLocal = 2;
@@ -51,6 +55,9 @@ public class ModManagerSection : VBoxContainer
     private readonly StyledButton _permissionButton;
 
     private readonly StyledButton _backButton;
+    private readonly StyledButton _orientButton;
+    private bool _portrait;
+    private BusyOverlay _busy;
 
     private LauncherModel _model;
     private WorkshopDownloadQueue _queue;
@@ -97,6 +104,21 @@ public class ModManagerSection : VBoxContainer
         title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         header.AddChild(title);
 
+        // Rotate toggle (issue #58): the launcher runs landscape, where a phone
+        // (non-fold) shows only ~3 cards. This flips the Mod Hub to portrait so a
+        // narrow single-column list shows many more; leaving the hub restores
+        // landscape. Default stays landscape.
+        _orientButton = new StyledButton(
+            Loc.Tr("⤢ 세로", "⤢ Portrait"),
+            scale,
+            fontSize: Ui.FontCaption,
+            height: Ui.TouchHeight,
+            variant: ButtonVariant.Ghost
+        );
+        _orientButton.CustomMinimumSize = new Vector2((int)(110 * scale), (int)(Ui.TouchHeight * scale));
+        _orientButton.Pressed += OnOrientToggle;
+        header.AddChild(_orientButton);
+
         // Tab bar: four equal-width tabs with an accent underline on the active
         // one (Material tabs — the pattern mobile users already know).
         var tabRow = new HBoxContainer();
@@ -139,7 +161,7 @@ public class ModManagerSection : VBoxContainer
         AddChild(_localPane);
 
         var localHint = new StyledLabel(
-            "Mod activation is managed in the game's Mods menu.",
+            Loc.Tr("모드 활성화는 게임 내 Mods 메뉴에서 관리됩니다.","Mod activation is managed in the game's Mods menu."),
             scale,
             fontSize: 12
         );
@@ -318,7 +340,7 @@ public class ModManagerSection : VBoxContainer
     }
 
     // Called when the Mod Hub is closed (BACK). Resumes the idle timeout that was
-    // suspended while browsing, so the connection isn't held open forever.
+    // suspended while browsing, and restores landscape if the user rotated.
     public void NotifyClosed()
     {
         if (_idleSuspended && _model?.Connection != null)
@@ -326,6 +348,30 @@ public class ModManagerSection : VBoxContainer
             _model.Connection.ResumeIdleTimeout();
             _idleSuspended = false;
         }
+        if (_portrait)
+        {
+            _portrait = false;
+            OrientationChangeRequested?.Invoke(false);
+        }
+    }
+
+    private void OnOrientToggle()
+    {
+        _portrait = !_portrait;
+        _orientButton.Text = _portrait ? Loc.Tr("⤢ 가로", "⤢ Landscape") : Loc.Tr("⤢ 세로", "⤢ Portrait");
+        OrientationChangeRequested?.Invoke(_portrait);
+    }
+
+    private void BeginBusy(string message)
+    {
+        _busy?.Dismiss();
+        _busy = BusyOverlay.Show(this, message, _scale);
+    }
+
+    private void EndBusy()
+    {
+        _busy?.Dismiss();
+        _busy = null;
     }
 
     // WorkshopDownloadQueue.Changed fires from its worker's pool thread. Progress
@@ -367,7 +413,7 @@ public class ModManagerSection : VBoxContainer
         if (!AppPaths.HasStoragePermission())
         {
             SetStatus(
-                "Storage permission is required to manage mods.",
+                Loc.Tr("모드를 관리하려면 저장소 권한이 필요합니다.","Storage permission is required to manage mods."),
                 WarnColor
             );
             _permissionButton.Visible = true;
@@ -403,15 +449,15 @@ public class ModManagerSection : VBoxContainer
             _listContainer.AddChild(
                 Ui.MakeEmptyState(
                     null,
-                    "No local mods installed.",
-                    "Tap \"Import Mod (.zip)\", or subscribe on the WORKSHOP tab.",
+                    Loc.Tr("설치된 로컬 모드가 없습니다.","No local mods installed."),
+                    Loc.Tr("\"Import Mod (.zip)\"를 누르거나 WORKSHOP 탭에서 구독하세요.","Tap \"Import Mod (.zip)\", or subscribe on the WORKSHOP tab."),
                     _scale
                 )
             );
             return;
         }
 
-        SetStatus($"{localInfos.Count} local mod(s) installed.", InfoColor);
+        SetStatus(Loc.Tr($"로컬 모드 {localInfos.Count}개 설치됨.",$"{localInfos.Count} local mod(s) installed."), InfoColor);
 
         var gameVersion = TryReadGameVersion();
         foreach (var info in localInfos)
@@ -489,10 +535,21 @@ public class ModManagerSection : VBoxContainer
     // Stash toggle for a local mod: same folder-move mechanism as workshop mods.
     private void OnLocalStashTogglePressed(ModEntryInfo info)
     {
-        var (ok, error) = info.Disabled ? ModStasher.Enable(info) : ModStasher.Disable(info);
+        bool wasDisabled = info.Disabled;
+        BeginBusy(
+            wasDisabled
+                ? Loc.Tr($"'{info.Id}' 활성화 중…", $"Enabling '{info.Id}'…")
+                : Loc.Tr($"'{info.Id}' 비활성화 중…", $"Disabling '{info.Id}'…")
+        );
+        var (ok, error) = wasDisabled ? ModStasher.Enable(info) : ModStasher.Disable(info);
+        EndBusy();
         SetStatus(
             ok
-                ? $"'{info.Id}' {(info.Disabled ? "enabled" : "disabled (stashed)")}."
+                ? (
+                    wasDisabled
+                        ? Loc.Tr($"'{info.Id}' 활성화됨.", $"'{info.Id}' enabled.")
+                        : Loc.Tr($"'{info.Id}' 비활성화됨(보관).", $"'{info.Id}' disabled (stashed).")
+                )
                 : error,
             ok ? InfoColor : WarnColor
         );
@@ -585,13 +642,21 @@ public class ModManagerSection : VBoxContainer
         var id = info.Id;
         var topLevelDir = info.TopLevelDir;
         ConfirmationRequested?.Invoke(
-            $"Remove '{info.Manifest.DisplayName}'?\nThis deletes the mod folder from storage.",
+            Loc.Tr(
+                $"'{info.Manifest.DisplayName}'을(를) 삭제할까요?\n저장소에서 모드 폴더가 삭제됩니다.",
+                $"Remove '{info.Manifest.DisplayName}'?\nThis deletes the mod folder from storage."
+            ),
             () =>
             {
-                if (ModImporter.DeleteMod(topLevelDir, id))
-                    SetStatus($"Removed {id}.", InfoColor);
-                else
-                    SetStatus($"Failed to remove {id}.", ErrorColor);
+                BeginBusy(Loc.Tr($"'{id}' 삭제 중…", $"Removing '{id}'…"));
+                bool ok = ModImporter.DeleteMod(topLevelDir, id);
+                EndBusy();
+                SetStatus(
+                    ok
+                        ? Loc.Tr($"{id} 삭제됨.", $"Removed {id}.")
+                        : Loc.Tr($"{id} 삭제 실패.", $"Failed to remove {id}."),
+                    ok ? InfoColor : ErrorColor
+                );
                 RefreshLocal();
             },
             null
@@ -602,7 +667,7 @@ public class ModManagerSection : VBoxContainer
     {
         AppPaths.RequestStoragePermission();
         SetStatus(
-            "After granting permission, return here and tap Refresh.",
+            Loc.Tr("권한을 허용한 뒤 여기로 돌아와 Refresh 를 누르세요.","After granting permission, return here and tap Refresh."),
             WarnColor
         );
     }
@@ -614,7 +679,7 @@ public class ModManagerSection : VBoxContainer
         PatchHelper.Log("[Mods] Import button tapped");
         _importInFlight = true;
         _importButton.Disabled = true;
-        SetStatus("Opening file picker...", InfoColor);
+        SetStatus(Loc.Tr("파일 선택기 여는 중…","Opening file picker…"), InfoColor);
 
         // Run the whole import pipeline on the thread pool to avoid Godot's
         // SynchronizationContext being disrupted by the SAF picker's OnPause/OnResume.
@@ -677,7 +742,7 @@ public class ModManagerSection : VBoxContainer
         }
 
         var zipPath = zipPaths[index];
-        SetStatus($"Importing {index + 1}/{zipPaths.Length}...", InfoColor);
+        SetStatus(Loc.Tr($"가져오는 중 {index + 1}/{zipPaths.Length}…",$"Importing {index + 1}/{zipPaths.Length}…"), InfoColor);
 
         try
         {
@@ -698,7 +763,7 @@ public class ModManagerSection : VBoxContainer
                     .From(() =>
                     {
                         ConfirmationRequested?.Invoke(
-                            $"'{result.ModId}' is already installed. Overwrite?",
+                            Loc.Tr($"'{result.ModId}'은(는) 이미 설치되어 있습니다. 덮어쓸까요?",$"'{result.ModId}' is already installed. Overwrite?"),
                             () =>
                                 _ = Task.Run(async () =>
                                 {

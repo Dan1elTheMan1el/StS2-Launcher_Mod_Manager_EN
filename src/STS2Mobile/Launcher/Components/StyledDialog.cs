@@ -3,8 +3,11 @@ using Godot;
 
 namespace STS2Mobile.Launcher.Components;
 
-// Modal confirmation dialog built from styled launcher components.
-// Renders as a dimmed overlay with a centered panel, message, and OK/Cancel buttons.
+// Modal confirmation dialog: dimmed overlay, centered panel, message, OK/Cancel.
+// The message sits in a height-capped ScrollContainer and the buttons are pinned
+// below it (outside the scroll), so a long message — e.g. "these 20 mods will be
+// removed" — scrolls instead of pushing the buttons off-screen (issue #58). This
+// fixed-buttons + scrolling-body pattern is the house rule for every dialog.
 public class StyledDialog : ColorRect
 {
     public event Action Confirmed;
@@ -34,11 +37,32 @@ public class StyledDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(16 * scale));
         dialogBox.AddChild(vbox);
 
+        // Height-capped scroll so a long message can't push the buttons away.
+        var scroll = new ScrollContainer();
+        scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
+        scroll.CustomMinimumSize = new Vector2((int)(320 * scale), 0);
+        scroll.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        scroll.CustomMinimumSize = new Vector2((int)(320 * scale), (int)(0));
+        vbox.AddChild(scroll);
+
         var label = new StyledLabel(message, scale, fontSize: 16);
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        label.CustomMinimumSize = new Vector2((int)(300 * scale), 0);
-        label.HorizontalAlignment = HorizontalAlignment.Center;
-        vbox.AddChild(label);
+        label.CustomMinimumSize = new Vector2((int)(320 * scale), 0);
+        label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        scroll.AddChild(label);
+
+        // Cap the scroll viewport once laid out, so short messages stay compact
+        // and long ones scroll within ~60% of the screen height.
+        scroll.Resized += () =>
+        {
+            var vpH = scroll.GetViewport()?.GetVisibleRect().Size.Y ?? (1080f);
+            var cap = vpH * 0.6f;
+            var natural = label.GetCombinedMinimumSize().Y;
+            scroll.CustomMinimumSize = new Vector2(
+                (int)(320 * scale),
+                (int)Mathf.Min(cap, natural)
+            );
+        };
 
         var buttonRow = new HBoxContainer();
         buttonRow.AddThemeConstantOverride("separation", (int)(12 * scale));

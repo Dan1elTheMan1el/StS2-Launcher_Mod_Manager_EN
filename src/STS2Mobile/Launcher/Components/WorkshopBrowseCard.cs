@@ -98,14 +98,24 @@ public class WorkshopBrowseCard : PanelContainer
 
     public void SetBusy(bool busy) => _actionButton.Disabled = busy;
 
-    public void ApplyStatus(string badge, bool subscribed)
+    // badgeKey is an English semantic key ("Installed" / "Update available" /
+    // "Disabled" / "Subscribed") so color logic stays stable; display text is
+    // localized here.
+    public void ApplyStatus(string badgeKey, bool subscribed)
     {
         _subscribed = subscribed;
-        _badgeLabel.Text = badge ?? "";
-        _badgeLabel.Visible = !string.IsNullOrEmpty(badge);
+        _badgeLabel.Visible = !string.IsNullOrEmpty(badgeKey);
+        _badgeLabel.Text = badgeKey switch
+        {
+            "Installed" => Loc.Tr("설치됨", "Installed"),
+            "Update available" => Loc.Tr("업데이트 있음", "Update available"),
+            "Disabled" => Loc.Tr("비활성", "Disabled"),
+            "Subscribed" => Loc.Tr("구독 중", "Subscribed"),
+            _ => badgeKey ?? "",
+        };
         _badgeLabel.AddThemeColorOverride(
             "font_color",
-            badge switch
+            badgeKey switch
             {
                 "Installed" => Ui.Success,
                 "Update available" => Ui.Warn,

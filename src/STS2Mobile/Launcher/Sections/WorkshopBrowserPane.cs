@@ -59,7 +59,10 @@ public class WorkshopBrowserPane : VBoxContainer
         searchRow.AddThemeConstantOverride("separation", (int)(6 * scale));
         AddChild(searchRow);
 
-        _searchEdit = new StyledLineEdit("Search Workshop or paste item URL/ID...", scale);
+        _searchEdit = new StyledLineEdit(
+            Loc.Tr("창작마당 검색 또는 URL/ID 붙여넣기…", "Search Workshop or paste item URL/ID…"),
+            scale
+        );
         _searchEdit.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _searchEdit.TextSubmitted += _ => OnSearchPressed();
         searchRow.AddChild(_searchEdit);
@@ -151,13 +154,13 @@ public class WorkshopBrowserPane : VBoxContainer
     {
         bool first = !_initialized;
         if (first)
-            RunOnMain(() => SetStatus("Connecting to Steam...", InfoColor));
+            RunOnMain(() => SetStatus(Loc.Tr("Steam 연결 중…","Connecting to Steam…"), InfoColor));
 
         var (ok, conn) = await ensureSession().ConfigureAwait(false);
         if (!ok)
         {
             _connection = null;
-            RunOnMain(() => SetStatus("Steam login is required for Workshop features.", WarnColor));
+            RunOnMain(() => SetStatus(Loc.Tr("창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.","Steam login is required for Workshop features."), WarnColor));
             return;
         }
         _connection = conn;
@@ -178,7 +181,7 @@ public class WorkshopBrowserPane : VBoxContainer
         RunOnMain(() =>
         {
             RefreshAllCardStatuses();
-            SetStatus($"{_totalLoaded} / {_totalAvailable} item(s)", InfoColor);
+            SetStatus(Loc.Tr($"{_totalLoaded} / {_totalAvailable}개","{_totalLoaded} / {_totalAvailable} item(s)"), InfoColor);
         });
     }
 
@@ -265,7 +268,7 @@ public class WorkshopBrowserPane : VBoxContainer
 
         RunOnMain(() =>
         {
-            SetStatus("Loading...", InfoColor);
+            SetStatus(Loc.Tr("불러오는 중…","Loading…"), InfoColor);
             _searchButton.Disabled = true;
             _loadMoreButton.Disabled = true;
         });
@@ -275,6 +278,32 @@ public class WorkshopBrowserPane : VBoxContainer
             var (items, total) = await _connection
                 .QueryWorkshopAsync(sort, searchText, tags, _page, PerPage)
                 .ConfigureAwait(false);
+
+            // Steam matches a multi-word query token-by-token, so "save merger"
+            // buries an exact "SaveMerger" under 100+ loose hits. When the query
+            // has spaces, also fetch the space-stripped variant (page 1) and merge
+            // — then rank client-side so the best title matches float to the top.
+            var mergedPfids = new HashSet<ulong>(items.Select(i => i.PublishedFileId));
+            if (resetPage && searchText.Contains(' '))
+            {
+                var collapsed = searchText.Replace(" ", "");
+                try
+                {
+                    var (extra, _) = await _connection
+                        .QueryWorkshopAsync(sort, collapsed, tags, 1, PerPage)
+                        .ConfigureAwait(false);
+                    foreach (var e in extra)
+                        if (mergedPfids.Add(e.PublishedFileId))
+                            items.Add(e);
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log($"[Workshop] collapsed-query merge failed: {ex.Message}");
+                }
+            }
+
+            if (!string.IsNullOrEmpty(searchText))
+                items = RankBySearch(items, searchText);
 
             _totalAvailable = total;
             if (resetPage)
@@ -286,7 +315,7 @@ public class WorkshopBrowserPane : VBoxContainer
                 foreach (var item in items)
                     AddResultCard(item);
                 UpdateTagChips(items);
-                SetStatus($"{_totalLoaded} / {_totalAvailable} item(s)", InfoColor);
+                SetStatus(Loc.Tr($"{_totalLoaded} / {_totalAvailable}개","{_totalLoaded} / {_totalAvailable} item(s)"), InfoColor);
                 _loadMoreButton.Visible = _totalLoaded < _totalAvailable;
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
@@ -297,11 +326,49 @@ public class WorkshopBrowserPane : VBoxContainer
             PatchHelper.Log($"[Workshop] QueryWorkshopAsync failed: {ex}");
             RunOnMain(() =>
             {
-                SetStatus($"Workshop query failed: {ex.Message}", WarnColor);
+                SetStatus(Loc.Tr($"검색 실패: {ex.Message}",$"Workshop query failed: {ex.Message}"), WarnColor);
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
             });
         }
+    }
+
+    // Client-side relevance ranking, mirroring how the Workshop site orders text
+    // search: exact title first, then title-contains, then all-tokens-in-title,
+    // then all-tokens-in-description, then the server's own order. Stable within
+    // each tier (preserves Steam ranking as the tie-breaker).
+    private static List<WorkshopItemDetails> RankBySearch(
+        List<WorkshopItemDetails> items,
+        string query
+    )
+    {
+        var q = query.Trim().ToLowerInvariant();
+        var collapsed = q.Replace(" ", "");
+        var tokens = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        int Rank(WorkshopItemDetails it)
+        {
+            var title = (it.Title ?? "").ToLowerInvariant();
+            var titleCollapsed = title.Replace(" ", "");
+            var desc = (it.Description ?? "").ToLowerInvariant();
+
+            if (title == q || titleCollapsed == collapsed)
+                return 0; // exact title
+            if (title.Contains(q) || titleCollapsed.Contains(collapsed))
+                return 1; // title contains the whole query
+            if (tokens.Length > 0 && tokens.All(t => title.Contains(t)))
+                return 2; // every token in the title
+            if (tokens.Length > 0 && tokens.All(t => desc.Contains(t)))
+                return 3; // every token in the description
+            return 4; // server order only
+        }
+
+        return items
+            .Select((it, i) => (it, rank: Rank(it), i))
+            .OrderBy(x => x.rank)
+            .ThenBy(x => x.i)
+            .Select(x => x.it)
+            .ToList();
     }
 
     // Accepts a bare numeric published-file id or any URL carrying "id=<digits>"
@@ -329,7 +396,7 @@ public class WorkshopBrowserPane : VBoxContainer
         RunOnMain(() =>
         {
             ClearResults();
-            SetStatus("Looking up item...", InfoColor);
+            SetStatus(Loc.Tr("아이템 조회 중…","Looking up item…"), InfoColor);
             _searchButton.Disabled = true;
         });
 
@@ -349,14 +416,14 @@ public class WorkshopBrowserPane : VBoxContainer
                 if (item == null)
                 {
                     SetStatus(
-                        $"No Workshop item found for id {pfid} (or this account cannot access it).",
+                        Loc.Tr($"id {pfid} 에 해당하는 창작마당 아이템이 없습니다(또는 이 계정으로 접근 불가).",$"No Workshop item found for id {pfid} (or this account cannot access it)."),
                         WarnColor
                     );
                 }
                 else
                 {
                     AddResultCard(item);
-                    SetStatus("1 item (direct lookup)", InfoColor);
+                    SetStatus(Loc.Tr("1개 (직접 조회)","1 item (direct lookup)"), InfoColor);
                 }
                 _loadMoreButton.Visible = false;
                 _searchButton.Disabled = false;
@@ -461,8 +528,12 @@ public class WorkshopBrowserPane : VBoxContainer
 
         if (item.FileSize > LargeDownloadWarningBytes)
         {
+            var size = STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize);
             var confirmed = await ConfirmAsync(
-                $"'{item.Title}' is {STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize)}. Subscribe and download?"
+                Loc.Tr(
+                    $"'{item.Title}' 크기는 {size} 입니다. 구독하고 다운로드할까요?",
+                    $"'{item.Title}' is {size}. Subscribe and download?"
+                )
             );
             if (!confirmed)
                 return;
@@ -480,7 +551,7 @@ public class WorkshopBrowserPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetCardBusy(pfid, false);
-                SetStatus($"Subscribe failed: {ex.Message}", WarnColor);
+                SetStatus(Loc.Tr($"구독 실패: {ex.Message}", $"Subscribe failed: {ex.Message}"), WarnColor);
             });
             return;
         }
@@ -552,7 +623,7 @@ public class WorkshopBrowserPane : VBoxContainer
             return;
 
         var confirmed = await ConfirmAsync(
-            $"Unsubscribe from '{item.Title}'? This removes the mod from your device."
+            Loc.Tr($"'{item.Title}' 구독을 해제할까요? 기기에서 모드가 삭제됩니다.",$"Unsubscribe from '{item.Title}'? This removes the mod from your device.")
         );
         if (!confirmed)
             return;
@@ -572,7 +643,7 @@ public class WorkshopBrowserPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetCardBusy(pfid, false);
-                SetStatus($"Unsubscribe failed: {ex.Message}", WarnColor);
+                SetStatus(Loc.Tr($"구독 해제 실패: {ex.Message}",$"Unsubscribe failed: {ex.Message}"), WarnColor);
             });
             return;
         }
@@ -584,7 +655,7 @@ public class WorkshopBrowserPane : VBoxContainer
         {
             SetCardBusy(pfid, false);
             RefreshCardStatus(pfid);
-            SetStatus(removed ? "Unsubscribed." : "Unsubscribed on Steam; local cleanup skipped.", InfoColor);
+            SetStatus(removed ? Loc.Tr("구독 해제됨.","Unsubscribed.") : Loc.Tr("Steam 구독은 해제됨; 로컬 정리 건너뜀.","Unsubscribed on Steam; local cleanup skipped."), InfoColor);
         });
     }
 

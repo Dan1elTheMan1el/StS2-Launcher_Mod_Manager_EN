@@ -22,7 +22,8 @@ public class SubscribedModRow : PanelContainer
         bool statusIsError,
         float scale,
         bool disabled = false,
-        bool showStashToggle = false
+        bool showStashToggle = false,
+        bool statusGood = false
     )
     {
         AddThemeStyleboxOverride(
@@ -59,7 +60,7 @@ public class SubscribedModRow : PanelContainer
             "font_color",
             statusIsError ? Ui.Danger
             : disabled ? Ui.TextDisabled
-            : status == "Installed" ? Ui.Success
+            : statusGood ? Ui.Success
             : Ui.TextSecondary
         );
         vbox.AddChild(statusLabel);

@@ -254,6 +254,38 @@ public class LauncherView
         _mainHbox.Visible = true;
     }
 
+    // Issue #58: flip the launcher between landscape (default) and portrait for the
+    // Mod Hub only. Swaps the pinned ContentScaleSize so the whole UI tree
+    // re-stretches; the viewport SizeChanged handler (constructor) then resizes the
+    // panel. The game sets its own orientation on launch, so this never leaks out.
+    public void SetModHubOrientation(bool portrait)
+    {
+        try
+        {
+            DisplayServer.ScreenSetOrientation(
+                portrait
+                    ? DisplayServer.ScreenOrientation.Portrait
+                    : DisplayServer.ScreenOrientation.SensorLandscape
+            );
+            var window = _parent.GetWindow();
+            if (window != null)
+                window.ContentScaleSize = portrait
+                    ? new Vector2I(1080, 1920)
+                    : new Vector2I(1920, 1080);
+            var vp = _parent.GetViewport();
+            if (vp != null)
+            {
+                var newSize = vp.GetVisibleRect().Size;
+                _parent.Size = newSize;
+                _panel.UpdateSizeFromViewport(newSize);
+            }
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] SetModHubOrientation failed: {ex.Message}");
+        }
+    }
+
     public void UpdateKeyboardOffset()
     {
         var kbHeight = DisplayServer.VirtualKeyboardGetHeight();
