@@ -159,6 +159,10 @@ public class LauncherModel : IDisposable
                 _credentialStore.RefreshToken
             );
             await VerifyOwnershipAsync();
+            // issue #59 — the server accepted this token, so a local "expired"
+            // verdict (clock skew, parse quirk) is overruled. ExpiringSoon is
+            // NOT cleared here: it's still the same token with the same exp.
+            SavedTokenExpired = false;
             _ = MaybeRenewRefreshTokenAsync();
         }
         catch (Exception ex)
@@ -211,6 +215,11 @@ public class LauncherModel : IDisposable
 
             _connection = new SteamConnection(result.AccountName, result.RefreshToken);
             await VerifyOwnershipAsync();
+            // issue #59 — a fresh interactive login just issued a brand-new
+            // refresh token: both expiry signals reset so the auth gates
+            // (BlockIfTokenExpired) reopen immediately without a restart.
+            SavedTokenExpired = false;
+            SavedTokenExpiringSoon = false;
             _ = MaybeRenewRefreshTokenAsync();
         }
         catch (Exception ex)
@@ -262,6 +271,9 @@ public class LauncherModel : IDisposable
 
         _credentialStore.Save(_credentialStore.AccountName, newToken, _credentialStore.GuardData);
         LauncherPatches.SavedRefreshToken = newToken;
+        // The renewed token pushed exp ~200 days out — the boot warning no
+        // longer applies to what's now saved.
+        SavedTokenExpiringSoon = false;
         PatchHelper.Log("[Issue59] Refresh token renewed and persisted");
     }
 
