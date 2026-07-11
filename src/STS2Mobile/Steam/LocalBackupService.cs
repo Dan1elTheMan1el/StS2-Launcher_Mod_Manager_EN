@@ -427,4 +427,281 @@ public static class LocalBackupService
         }
         catch { }
     }
+
+    // ---- Issue #64: snapshot listing + restore ----------------------------------
+
+    // One listed backup "leaf" — the directory RestoreSnapshot is later called
+    // with. Kept and discarded halves of a conflict set are surfaced as two
+    // independent entries (SetRoot already points at kept/ or discarded/
+    // directly, not the shared <ts>_conflict parent) so the picker can
+    // restore either side on its own.
+    public class SnapshotInfo
+    {
+        public string SetRoot;
+        public string Kind; // "manual" | "auto-match" | "auto-conflict-kept" | "auto-conflict-discarded"
+        public string Timestamp; // yyyyMMdd_HHmmss, extracted from the folder name
+        public int FileCount;
+        public long TotalBytes;
+    }
+
+    public class RestoreResult
+    {
+        public bool Success;
+        public int FileCount;
+        public long TotalBytes;
+        public string PreRestoreBackupPath;
+        public string Error;
+        public bool NeedsPermission;
+    }
+
+    private const string Issue64Tag = "[Issue64]";
+
+    // Lists every restorable snapshot leaf under Saves/manual and Saves/auto,
+    // newest first. Synchronous (matches BackupNow's convention — caller
+    // wraps in Task.Run). Empty list — not an error — when storage
+    // permission is missing or nothing has been backed up yet.
+    public static List<SnapshotInfo> ListSnapshots()
+    {
+        var result = new List<SnapshotInfo>();
+        if (!AppPaths.HasStoragePermission())
+            return result;
+
+        try
+        {
+            CollectManualSnapshots(result);
+            CollectAutoSnapshots(result);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"{Issue64Tag} ListSnapshots FAIL: {ex.Message}");
+        }
+
+        // yyyyMMdd_HHmmss is lexically sortable — ordinal descending on the
+        // extracted Timestamp is chronological descending (newest first).
+        result.Sort((a, b) => string.CompareOrdinal(b.Timestamp, a.Timestamp));
+        return result;
+    }
+
+    private static void CollectManualSnapshots(List<SnapshotInfo> result)
+    {
+        if (!Directory.Exists(AppPaths.ExternalManualBackupsDir))
+            return;
+
+        foreach (var dir in Directory.GetDirectories(AppPaths.ExternalManualBackupsDir))
+        {
+            var info = BuildSnapshotInfo(dir, "manual", Path.GetFileName(dir));
+            if (info != null)
+                result.Add(info);
+        }
+    }
+
+    private static void CollectAutoSnapshots(List<SnapshotInfo> result)
+    {
+        if (!Directory.Exists(AppPaths.ExternalAutoBackupsDir))
+            return;
+
+        foreach (var dir in Directory.GetDirectories(AppPaths.ExternalAutoBackupsDir))
+        {
+            var name = Path.GetFileName(dir);
+            if (name.EndsWith("_match", StringComparison.Ordinal))
+            {
+                var ts = name.Substring(0, name.Length - "_match".Length);
+                var info = BuildSnapshotInfo(dir, "auto-match", ts);
+                if (info != null)
+                    result.Add(info);
+            }
+            else if (name.EndsWith("_conflict", StringComparison.Ordinal))
+            {
+                // kept/discarded are exposed as two independent leaves — see
+                // SnapshotInfo's doc comment.
+                var ts = name.Substring(0, name.Length - "_conflict".Length);
+                var kept = BuildSnapshotInfo(Path.Combine(dir, "kept"), "auto-conflict-kept", ts);
+                if (kept != null)
+                    result.Add(kept);
+                var discarded = BuildSnapshotInfo(
+                    Path.Combine(dir, "discarded"),
+                    "auto-conflict-discarded",
+                    ts
+                );
+                if (discarded != null)
+                    result.Add(discarded);
+            }
+        }
+    }
+
+    // Returns null for a missing/empty leaf (e.g. a _conflict set whose
+    // "kept" phase never landed, or a set IsSetEmpty already pruned) —
+    // ListSnapshots skips those rather than showing an empty/broken row.
+    private static SnapshotInfo BuildSnapshotInfo(string setRoot, string kind, string timestamp)
+    {
+        if (!Directory.Exists(setRoot))
+            return null;
+
+        int count = 0;
+        long bytes = 0;
+        foreach (var file in Directory.EnumerateFiles(setRoot, "*", SearchOption.AllDirectories))
+        {
+            count++;
+            bytes += new FileInfo(file).Length;
+        }
+        if (count == 0)
+            return null;
+
+        return new SnapshotInfo
+        {
+            SetRoot = setRoot,
+            Kind = kind,
+            Timestamp = timestamp,
+            FileCount = count,
+            TotalBytes = bytes,
+        };
+    }
+
+    // Restores one snapshot leaf onto the live save tree. (1) permission
+    // check (2) BackupNow() as a pre-restore safety net — abort if it fails,
+    // the same "no backup, no destructive op" contract CopyProfile uses
+    // (3) every file under setRoot is written directly to its user://
+    // counterpart.
+    //
+    // Deliberately bypasses ISaveStore/GodotFileIo: AppPaths.BuildBackupPath
+    // only strips the "user://" prefix when it originally wrote the snapshot
+    // (see its own doc comment — "a restore is a plain copy... back to
+    // user://"), so the snapshot tree already IS the account-scoped absolute
+    // path with nothing left to re-prefix. Routing this through a
+    // GodotFileIo instance (whose SaveDir is scoped to the CURRENT account)
+    // would prepend a second steam/{userId}/ segment onto an
+    // already-absolute path.
+    //
+    // Existing live files with no counterpart in the snapshot are left alone
+    // (pure overwrite, no mirror-delete) — see 01_cloud_map.md §3-4: the
+    // snapshot carries no manifest of what was deliberately absent vs. never
+    // captured, so deleting on that basis isn't safe.
+    public static RestoreResult RestoreSnapshot(string setRoot)
+    {
+        try
+        {
+            if (!AppPaths.HasStoragePermission())
+                return new RestoreResult
+                {
+                    Success = false,
+                    NeedsPermission = true,
+                    Error = "저장소 권한이 없습니다.",
+                };
+
+            if (string.IsNullOrEmpty(setRoot) || !Directory.Exists(setRoot))
+                return new RestoreResult { Success = false, Error = "백업을 찾을 수 없습니다." };
+
+            var preRestore = BackupNow();
+            if (!preRestore.Success)
+            {
+                PatchHelper.Log(
+                    $"{Issue64Tag} RestoreSnapshot: pre-restore backup failed, aborting: {preRestore.Error}"
+                );
+                return new RestoreResult
+                {
+                    Success = false,
+                    Error = preRestore.Error,
+                    NeedsPermission = preRestore.NeedsPermission,
+                };
+            }
+
+            int count = 0;
+            long bytes = 0;
+            int total = 0;
+            int failCount = 0;
+            foreach (
+                var file in Directory.EnumerateFiles(setRoot, "*", SearchOption.AllDirectories)
+            )
+            {
+                total++;
+                try
+                {
+                    var relative = file.Substring(setRoot.Length)
+                        .TrimStart('/', '\\')
+                        .Replace('\\', '/');
+                    WriteViaGodotFileAccess("user://" + relative, file);
+                    count++;
+                    bytes += new FileInfo(file).Length;
+                }
+                catch (Exception ex)
+                {
+                    failCount++;
+                    PatchHelper.Log(
+                        $"{Issue64Tag} RestoreSnapshot: failed for {file}: {ex.Message}"
+                    );
+                }
+            }
+
+            // A partial failure must never present itself as a completed
+            // restore — the pre-restore backup (preRestore.DestPath) is the
+            // user's way back, so it's surfaced in the error text itself,
+            // not just logged. Whatever DID land is still counted in
+            // FileCount/TotalBytes.
+            if (failCount > 0)
+            {
+                PatchHelper.Log(
+                    $"{Issue64Tag} RestoreSnapshot PARTIAL: {failCount}/{total} files failed, "
+                        + $"{count} succeeded, pre-restore backup → {preRestore.DestPath}"
+                );
+                return new RestoreResult
+                {
+                    Success = false,
+                    FileCount = count,
+                    TotalBytes = bytes,
+                    PreRestoreBackupPath = preRestore.DestPath,
+                    Error = $"{failCount}/{total}개 파일 복원 실패. 복원 직전 백업: {preRestore.DestPath}",
+                };
+            }
+
+            PatchHelper.Log(
+                $"{Issue64Tag} RestoreSnapshot OK: {count} files, {bytes}B from {setRoot}, "
+                    + $"pre-restore backup → {preRestore.DestPath}"
+            );
+            return new RestoreResult
+            {
+                Success = true,
+                FileCount = count,
+                TotalBytes = bytes,
+                PreRestoreBackupPath = preRestore.DestPath,
+            };
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"{Issue64Tag} RestoreSnapshot FAIL: {ex.Message}");
+            return new RestoreResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    // Writes one snapshot file to its live user:// path via Godot's
+    // FileAccess API directly (see RestoreSnapshot's doc comment for why
+    // ISaveStore is deliberately not used here). tmp-then-rename mirrors
+    // GodotFileIo.WriteFile's own pattern so a kill mid-restore can't leave a
+    // truncated live save behind.
+    private static void WriteViaGodotFileAccess(string targetUserPath, string sourceDiskPath)
+    {
+        var lastSlash = targetUserPath.LastIndexOf('/');
+        if (lastSlash > 0)
+        {
+            var dir = targetUserPath.Substring(0, lastSlash);
+            if (!Godot.DirAccess.DirExistsAbsolute(dir))
+                Godot.DirAccess.MakeDirRecursiveAbsolute(dir);
+        }
+
+        var bytes = File.ReadAllBytes(sourceDiskPath);
+        var tmpPath = targetUserPath + ".tmp";
+
+        using (var fa = Godot.FileAccess.Open(tmpPath, Godot.FileAccess.ModeFlags.Write))
+        {
+            if (fa == null)
+                throw new IOException(
+                    $"Failed to open {tmpPath} for writing: {Godot.FileAccess.GetOpenError()}"
+                );
+            if (!fa.StoreBuffer(bytes))
+                throw new IOException($"Failed to write {bytes.Length} bytes to {tmpPath}");
+        }
+
+        var renameError = Godot.DirAccess.RenameAbsolute(tmpPath, targetUserPath);
+        if (renameError != Godot.Error.Ok && !Godot.FileAccess.FileExists(targetUserPath))
+            throw new IOException($"Failed to rename {tmpPath} -> {targetUserPath}: {renameError}");
+    }
 }

@@ -6,6 +6,17 @@ using STS2Mobile.Steam;
 
 namespace STS2Mobile.Launcher.Components;
 
+// Issue #64: what the "프로필 복제"/"백업 복원" buttons in ProfilePickerDialog's
+// closing button row requested. Also used by LocalOnlyMenuDialog (D7 bypass
+// entry, cloud unavailable) so both entry points feed the same
+// LauncherPatches branch logic.
+public enum PickerAction
+{
+    None,
+    Copy,
+    Restore,
+}
+
 // Save Manager entry screen. Lists every (profile × modded) slot that has
 // local or cloud data as a tappable row, instead of collapsing everything
 // into one aggregate summary. Fixes the "ghost slot hijacking" bug: a 1.5KB
@@ -22,6 +33,12 @@ public class ProfilePickerDialog : ColorRect
     );
 
     public Task<SyncDecisionResult> Result => _result.Task;
+
+    // Issue #64: set by the "프로필 복제"/"백업 복원" buttons in the closing button
+    // row, alongside resolving Result with null (same as the plain "닫기"
+    // button) — callers must check this AFTER a null Result to tell "user
+    // closed the dialog" apart from "user wants a different flow".
+    public PickerAction RequestedAction { get; private set; } = PickerAction.None;
 
     // Pre-scale logical sizes for a 1700px-tall viewport (same convention as
     // CloudConflictDialog.DialogSizing), each floored so a short viewport's
@@ -114,8 +131,50 @@ public class ProfilePickerDialog : ColorRect
             rows.AddChild(BuildRow(slot, scale, sz, Resolve));
 
         var buttonRow = new HBoxContainer();
+        buttonRow.AddThemeConstantOverride("separation", (int)(10 * scale));
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
+
+        // Issue #64: profile-copy ("복제") and backup-restore entry points, added
+        // as plain secondary actions in the same closing row (Von Restorff
+        // emphasis stays on the slot rows above). Both resolve the dialog with a
+        // null slot — RequestedAction carries which button fired so the caller
+        // (LauncherPatches.OpenSaveSyncDialogAsync) can branch after its existing
+        // `if (picked == null)` check without changing the Result contract every
+        // other caller of this dialog relies on.
+        var copyButton = new StyledButton(
+            "프로필 복제",
+            scale,
+            fontSize: sz.CloseFs,
+            height: sz.CloseHeight
+        );
+        copyButton.CustomMinimumSize = new Vector2(
+            (int)(120 * scale),
+            copyButton.CustomMinimumSize.Y
+        );
+        copyButton.Pressed += () =>
+        {
+            RequestedAction = PickerAction.Copy;
+            Resolve(null);
+        };
+        buttonRow.AddChild(copyButton);
+
+        var restoreButton = new StyledButton(
+            "백업 복원",
+            scale,
+            fontSize: sz.CloseFs,
+            height: sz.CloseHeight
+        );
+        restoreButton.CustomMinimumSize = new Vector2(
+            (int)(120 * scale),
+            restoreButton.CustomMinimumSize.Y
+        );
+        restoreButton.Pressed += () =>
+        {
+            RequestedAction = PickerAction.Restore;
+            Resolve(null);
+        };
+        buttonRow.AddChild(restoreButton);
 
         var closeButton = new StyledButton(
             "닫기",
