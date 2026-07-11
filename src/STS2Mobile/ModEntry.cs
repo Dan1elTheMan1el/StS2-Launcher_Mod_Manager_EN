@@ -100,10 +100,14 @@ public static class ModEntry
         // Game-independent (patches HarmonyLib) — before any BaseLib/mod patching.
         PatchAllResiliencePatches.Apply(_harmony);
 
-        // EXPERIMENT (issue #65 follow-up): bypass Aeonglass Feminization's
-        // Windows-only gate via AssemblyLoad watcher. Game-independent (only
-        // fires if the mod assembly ever loads).
-        ModCompatShims.Apply(_harmony);
+        // EXPERIMENTAL mod-guard (issue #65 follow-up): generic caller-aware
+        // Windows spoof for mod assemblies + exception→mod attribution with
+        // in-game alert. All game-independent, all fail-safe (errors degrade
+        // to current behavior, invisible to users without gated mods).
+        ModAssemblyRegistry.Install();
+        ModPlatformSpoofPatches.Apply(_harmony);
+        ModExceptionAttributionPatches.Apply(_harmony);
+        ModGuardAlert.StartTestTriggerWatcher();
 
         // Game patches require sts2.dll; if missing, fall through to standalone launcher.
         try
