@@ -415,9 +415,7 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                                 appid = AppId,
                                 batch_id = batchId,
                                 batch_eresult = (uint)(
-                                    anyUploadFailed
-                                        ? SteamKit2.EResult.Fail
-                                        : SteamKit2.EResult.OK
+                                    anyUploadFailed ? SteamKit2.EResult.Fail : SteamKit2.EResult.OK
                                 ),
                             }
                         )

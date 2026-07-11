@@ -66,7 +66,11 @@ public class ProfilePickerDialog : ColorRect
         };
     }
 
-    public ProfilePickerDialog(IReadOnlyList<SyncDecisionResult> slots, float scale, float viewportHeight)
+    public ProfilePickerDialog(
+        IReadOnlyList<SyncDecisionResult> slots,
+        float scale,
+        float viewportHeight
+    )
     {
         var sz = ResolveSizing(viewportHeight);
 
@@ -149,9 +153,18 @@ public class ProfilePickerDialog : ColorRect
         row.CustomMinimumSize = new Vector2(0, (int)(sz.RowHeight * scale));
 
         var r = (int)(6 * scale);
-        row.AddThemeStyleboxOverride("normal", StyledButton.MakeFilled(new Color(0.18f, 0.18f, 0.22f), r));
-        row.AddThemeStyleboxOverride("hover", StyledButton.MakeFilled(new Color(0.22f, 0.22f, 0.27f), r));
-        row.AddThemeStyleboxOverride("pressed", StyledButton.MakeFilled(new Color(0.15f, 0.15f, 0.18f), r));
+        row.AddThemeStyleboxOverride(
+            "normal",
+            StyledButton.MakeFilled(new Color(0.18f, 0.18f, 0.22f), r)
+        );
+        row.AddThemeStyleboxOverride(
+            "hover",
+            StyledButton.MakeFilled(new Color(0.22f, 0.22f, 0.27f), r)
+        );
+        row.AddThemeStyleboxOverride(
+            "pressed",
+            StyledButton.MakeFilled(new Color(0.15f, 0.15f, 0.18f), r)
+        );
         row.Pressed += () => onPick(slot);
 
         var hbox = new HBoxContainer();

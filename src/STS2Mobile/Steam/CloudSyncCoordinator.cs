@@ -226,7 +226,8 @@ public static class CloudSyncCoordinator
                 // actually underwent recovery.
                 if (
                     IsProgressFile(path)
-                    && !await ProgressRecoveryGate.ShouldAllowPushAsync(cloudStore, path)
+                    && !await ProgressRecoveryGate
+                        .ShouldAllowPushAsync(cloudStore, path)
                         .ConfigureAwait(false)
                 )
                 {
@@ -507,5 +508,4 @@ public static class CloudSyncCoordinator
             }
         }
     }
-
 }

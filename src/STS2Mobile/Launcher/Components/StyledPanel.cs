@@ -17,8 +17,8 @@ public class StyledPanel : CenterContainer
         panelContainer.CustomMinimumSize = new Vector2(vpSize.X * widthRatio, 0);
 
         var style = new StyleBoxFlat();
-        style.BgColor = new Color(0.12f, 0.12f, 0.15f);
-        style.SetCornerRadiusAll(S(scale, 8));
+        style.BgColor = Ui.Surface;
+        style.SetCornerRadiusAll(S(scale, Ui.RadiusL));
         style.ContentMarginLeft = S(scale, 28);
         style.ContentMarginRight = S(scale, 28);
         style.ContentMarginTop = S(scale, 24);

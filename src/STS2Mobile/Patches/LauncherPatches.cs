@@ -197,6 +197,7 @@ public static class LauncherPatches
         // the z-ordering were fixed, leaving the launcher's PLAY button live
         // during a sync decision invites accidental re-entry. Once the user has
         // pressed PLAY, the launcher's job is done.
+        launcher.MarkPlannedTeardown();
         launcher.QueueFree();
 
         // Issue #53 — cover the launcher→game gap with a status overlay. The cloud

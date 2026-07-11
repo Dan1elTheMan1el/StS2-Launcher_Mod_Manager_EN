@@ -51,3 +51,6 @@ logs.txt
 # .NET
 *.nupkg
 patchnotes.md
+
+# user_file
+.userfile/

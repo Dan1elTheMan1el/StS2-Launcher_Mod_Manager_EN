@@ -10,6 +10,18 @@ namespace STS2Mobile.Launcher;
 // processes a main-thread action queue so SteamKit callbacks can update the UI.
 public class LauncherUI : Control
 {
+    // True while the launcher owns the screen. GameInputSuppressPatches skips the
+    // game's global key/hotkey handlers while set, so an injected KEYCODE_BACK
+    // (Samsung edge-swipe) can't trigger game-side back/debug logic under us.
+    public static bool LauncherActive { get; private set; }
+
+    // Set right before the PLAY handoff frees this node, so OnExitTree can tell a
+    // planned teardown from the game unexpectedly removing the launcher (observed
+    // during multi-window churn — the whole Mod Hub "disappeared").
+    private bool _plannedTeardown;
+
+    public void MarkPlannedTeardown() => _plannedTeardown = true;
+
     private readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     private LauncherModel _model;
     private LauncherView _view;
@@ -32,6 +44,13 @@ public class LauncherUI : Control
     public void Initialize()
     {
         ZIndex = 100;
+
+        // NOTE: an earlier build raised gui/common/default_scroll_deadzone to 30 to
+        // arbitrate a card-body tap overlay vs. scrolling. That overlay is gone
+        // (detail entry is now an explicit DETAIL button), and the raised deadzone
+        // was itself killing touch drag-to-scroll on the card body — only the
+        // scrollbar worked (user report). Leaving the deadzone at the engine default
+        // (0) restores the first-Mod-Hub-build behaviour where any body drag scrolls.
 
         // The game PCK's project.godot pins display/window/handheld/orientation to
         // landscape, which Godot applies at runtime and silently overrides the
@@ -113,6 +132,7 @@ public class LauncherUI : Control
 
         GetTree().ProcessFrame += OnProcessFrame;
         TreeExiting += OnExitTree;
+        LauncherActive = true;
         _controller.Start();
     }
 
@@ -146,8 +166,21 @@ public class LauncherUI : Control
         }
     }
 
+    // Heartbeat: one log line every 30 s from the engine main loop. During the
+    // 12:04 hard freeze (device, split-screen) the app went silent with no
+    // exception/ANR/tombstone — this line is the discriminator between "idle but
+    // alive" and "main loop wedged" in the next capture.
+    private ulong _lastHeartbeatMsec;
+
     private void OnProcessFrame()
     {
+        var nowMsec = Time.GetTicksMsec();
+        if (nowMsec - _lastHeartbeatMsec >= 30_000)
+        {
+            _lastHeartbeatMsec = nowMsec;
+            PatchHelper.Log("[Launcher] hb");
+        }
+
         while (_mainThreadQueue.TryDequeue(out var action))
         {
             try
@@ -165,8 +198,30 @@ public class LauncherUI : Control
 
     private void OnExitTree()
     {
-        GetTree().ProcessFrame -= OnProcessFrame;
-        GetTree().AutoAcceptQuit = true;
+        // Every step is independently guarded: this ran with a half-torn-down
+        // tree on device (v312 log: NRE inside OnExitTree during multi-window
+        // churn) and an early throw must not skip the restore/dispose below.
+        LauncherActive = false;
+        PatchHelper.Log(
+            _plannedTeardown
+                ? "[Launcher] OnExitTree (planned PLAY handoff)"
+                : "[Launcher] OnExitTree UNEXPECTED — launcher removed without PLAY "
+                    + "(likely game-side teardown; see GameInputSuppressPatches)"
+        );
+
+        try
+        {
+            var tree = GetTree();
+            if (tree != null)
+            {
+                tree.ProcessFrame -= OnProcessFrame;
+                tree.AutoAcceptQuit = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] OnExitTree tree cleanup failed: {ex.Message}");
+        }
 
         // Hand the Window's content scale back to whatever the game set so the
         // launcher exit doesn't break the game's own UI sizing.
@@ -189,12 +244,40 @@ public class LauncherUI : Control
             _windowScaleOverridden = false;
         }
 
-        _model?.Dispose();
+        try
+        {
+            _model?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] OnExitTree model dispose failed: {ex.Message}");
+        }
     }
 
     public override void _Notification(int what)
     {
-        if (what == NotificationWMGoBackRequest && _controller is { IsModManagerOpen: true })
+        if (what != NotificationWMGoBackRequest)
+            return;
+
+        // Android convention: if the soft keyboard is up, Back dismisses it first
+        // rather than navigating. Without this, tapping Back while typing in the
+        // Workshop search box fell straight through to the Mod-Hub-close handler,
+        // yanking the user out of the Mod Hub mid-search.
+        if (DisplayServer.VirtualKeyboardGetHeight() > 0)
+        {
+            GetViewport()?.GuiReleaseFocus();
+            DisplayServer.VirtualKeyboardHide();
+            return;
+        }
+
+        // Back priority (Android convention, user-requested): keyboard →
+        // top-most modal (detail page / any dialog; a busy overlay swallows the
+        // press) → Mod Hub close → only then whatever app-level double-back-exit
+        // applies. ModalGate holds the stack; every modal registers itself.
+        if (Launcher.Components.ModalGate.TryHandleBack())
+            return;
+
+        if (_controller is { IsModManagerOpen: true })
             _controller.OnModManagerBackPressed();
     }
 }

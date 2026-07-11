@@ -23,6 +23,7 @@ public class LauncherController
     private string _lastLaunchText = "LAUNCH";
     private bool _lastShowCloudSync;
     private bool _lastShowUpdate;
+
     // Issue #45: OnCheckGameUpdatePressed 의 picked != current 분기 통과 시 true
     // 로 마킹, DownloadCompleted 콜백에서 소비. true 였다면 NeedsRestartAfterBranchSwitch
     // set → Play 버튼이 "앱 재시작 필요" 로 분기됨.
@@ -89,7 +90,9 @@ public class LauncherController
                 {
                     _pendingBranchSwitch = false;
                     _model.NeedsRestartAfterBranchSwitch = true;
-                    PatchHelper.Log("[Launcher] Branch-switch download complete — flagging restart");
+                    PatchHelper.Log(
+                        "[Launcher] Branch-switch download complete — flagging restart"
+                    );
                 }
 
                 // Issue #53: 인세션 same-branch 업데이트가 게임 PCK 로 부팅된 상태에서
@@ -98,11 +101,7 @@ public class LauncherController
                 // 업데이트만: 실제로 게임 PCK 로 부팅됐고(InGameMode) 어셈블리가 실제로
                 // 교체된 경우에만 자동 재시작. 첫 설치(bootstrap, InGameMode=false)는
                 // 기존 RESTART APP 플로우 유지.
-                if (
-                    !wasBranchSwitch
-                    && _model.InGameMode
-                    && LauncherModel.GameAssemblyReplaced()
-                )
+                if (!wasBranchSwitch && _model.InGameMode && LauncherModel.GameAssemblyReplaced())
                 {
                     PatchHelper.Log(
                         "[Launcher] In-session update replaced game assembly — auto-restarting"
@@ -171,7 +170,13 @@ public class LauncherController
         _view.Actions.CheckGameUpdatePressed += OnCheckGameUpdatePressed;
         _view.Actions.CheckLauncherUpdatePressed += OnCheckLauncherUpdatePressed;
         _view.ModManagerButton.Pressed += OnModManagerPressed;
+        _view.ModsButton.Pressed += OnModsPressed;
         _view.ModManager.BackPressed += OnModManagerBackPressed;
+        _view.ModManager.OrientationChangeRequested += portrait =>
+            _view.SetModHubOrientation(portrait);
+        // Issue #58 phase 4b: the Mod Hub's Workshop/Subscribed/Downloads tabs need
+        // the launcher's SteamConnection + session state to issue PublishedFile RPCs.
+        _view.ModManager.Configure(_model);
         _view.DebugButton.Pressed += OnDebugTogglePressed;
         UpdateDebugButtonLabel();
 
@@ -250,6 +255,7 @@ public class LauncherController
         _lastShowUpdate = showUpdate;
         _view.Actions.ShowLaunch(text, showCloudSync, showUpdate);
         _view.ModManagerButton.Visible = true;
+        _view.ModsButton.Visible = true;
 
         // Kick off the launcher self-update check the first time we land on the
         // launch stage. Only once per session, silent if already on latest.
@@ -299,8 +305,8 @@ public class LauncherController
     private bool _autoUpdateChecked;
 
     // Repurposed in 0.3.0 to open the Save Sync dialog instead of the WIP mod
-    // manager screen. The original mod-manager navigation is preserved (commented
-    // below) for when that flow is finished.
+    // manager screen. That screen is now the Mod Hub, reachable via its own
+    // button (OnModsPressed, issue #58).
     private async void OnModManagerPressed()
     {
         if (_cloudOpInProgress)
@@ -323,19 +329,53 @@ public class LauncherController
             _view.SetCloudOpBusy(false);
             _cloudOpInProgress = false;
         }
-        // Original navigation:
-        // _view.ShowModManager();
+    }
+
+    // Issue #58: the original mod-manager navigation, revived as the Mod Hub
+    // entry point (its own button — SAVE MANAGER above keeps its 0.3.0 role).
+    private void OnModsPressed()
+    {
+        PatchHelper.Log("[Mods] Mod Manager button tapped");
+        _view.SetStatus("Mod Manager");
+        _view.ShowModManager();
     }
 
     public void OnModManagerBackPressed()
     {
+        // Leaving the Mod Hub tears down the download queue's session, cancelling
+        // any in-flight Workshop download. Warn first so the user doesn't lose a
+        // download to a stray Back press.
+        if (_view.ModManager.HasActiveDownload)
+        {
+            _view.ShowConfirmation(
+                "A Workshop download is still in progress. Leaving the Mod Manager will "
+                    + "cancel it. Leave anyway?",
+                onConfirmed: () =>
+                {
+                    _view.ModManager.CancelDownloads();
+                    CloseModManager();
+                },
+                onCancelled: null,
+                okLabel: "Leave",
+                cancelLabel: "Stay"
+            );
+            return;
+        }
+        CloseModManager();
+    }
+
+    private void CloseModManager()
+    {
         PatchHelper.Log(
             $"[Mods] Back pressed (launchStageShown={_launchStageShown}, sessionState={_model.SessionState})"
         );
+        // Resume the Steam idle timeout suspended while the hub was open.
+        _view.ModManager.NotifyClosed();
         // Must hide mod manager first, otherwise UpdateUI's ModManager.Visible guard
         // refuses to redraw — that was making BACK a no-op.
-        _view.ModManager.Visible = false;
+        _view.HideModManager();
         _view.ModManagerButton.Visible = false;
+        _view.ModsButton.Visible = false;
 
         // Fast path (ReadyToLaunch) shows the launch UI without changing SessionState,
         // so we can't rely on SessionState==LoggedIn to know if we were on the launch screen.
@@ -936,7 +976,9 @@ public class LauncherController
                     }
                     catch (Exception ex)
                     {
-                        _runOnMainThread(() => _view.AppendLog($"Local backup threw: {ex.Message}"));
+                        _runOnMainThread(() =>
+                            _view.AppendLog($"Local backup threw: {ex.Message}")
+                        );
                     }
                     finally
                     {
@@ -1099,7 +1141,9 @@ public class LauncherController
         catch (Exception ex)
         {
             // Timer path unavailable (e.g. detached tree) — restart immediately.
-            PatchHelper.Log($"[Launcher] Update-restart timer failed, restarting now: {ex.Message}");
+            PatchHelper.Log(
+                $"[Launcher] Update-restart timer failed, restarting now: {ex.Message}"
+            );
             FlushCloudThenRestart();
         }
     }
@@ -1127,7 +1171,9 @@ public class LauncherController
             }
             catch (Exception ex)
             {
-                PatchHelper.Log($"[Cloud] Pre-restart flush failed, restarting anyway: {ex.Message}");
+                PatchHelper.Log(
+                    $"[Cloud] Pre-restart flush failed, restarting anyway: {ex.Message}"
+                );
             }
             _runOnMainThread(() => LauncherModel.GetGodotApp()?.Call("restartApp"));
         });
@@ -1141,5 +1187,4 @@ public class LauncherController
             return "앱 재시작 필요";
         return _model.InGameMode ? "PLAY" : "RESTART APP";
     }
-
 }

@@ -57,6 +57,12 @@ public class LauncherModel : IDisposable
     public string FailReason => _failReason;
     public SessionState SessionState => _state;
 
+    // Issue #58 phase 4b: exposes the launcher's own SteamConnection so the Mod
+    // Hub's Workshop tabs can issue PublishedFile RPCs without opening a second
+    // connection. Null until EnsureConnectedAsync (or Connect/LoginAsync) has run
+    // at least once — callers must check SessionState == LoggedIn alongside this.
+    public SteamConnection Connection => _connection;
+
     public event Action<SessionState> SessionStateChanged;
     public event Action<string> LogReceived;
     public event Action<bool> CodeNeeded;
@@ -455,14 +461,7 @@ public class LauncherModel : IDisposable
             if (srcDll == null)
                 return false;
 
-            var destDll = Path.Combine(
-                dataDir,
-                ".godot",
-                "mono",
-                "publish",
-                "arm64",
-                "sts2.dll"
-            );
+            var destDll = Path.Combine(dataDir, ".godot", "mono", "publish", "arm64", "sts2.dll");
             if (!File.Exists(destDll))
                 return true; // nothing loaded on disk to match — treat as replaced
 
@@ -493,6 +492,17 @@ public class LauncherModel : IDisposable
         if (bytes >= 1024L * 1024)
             return $"{bytes / (1024.0 * 1024):F1} MB";
         return $"{bytes / 1024.0:F0} KB";
+    }
+
+    // Normalizes a manifest version string to a single "v" prefix so mods whose
+    // version already includes it (e.g. BaseLib's "v3.3.5") don't render as
+    // "vv3.3.5". Empty for a blank version.
+    public static string VersionLabel(string v)
+    {
+        if (string.IsNullOrWhiteSpace(v))
+            return "";
+        v = v.Trim();
+        return v.StartsWith("v") || v.StartsWith("V") ? v : "v" + v;
     }
 
     // Issue #36 Part A: the Local Backup on/off preference was removed. Backup

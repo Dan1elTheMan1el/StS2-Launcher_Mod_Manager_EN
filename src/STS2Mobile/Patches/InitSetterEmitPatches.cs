@@ -39,8 +39,7 @@ namespace STS2Mobile.Patches;
 // reference; it is loaded alongside Harmony at runtime.
 public static class InitSetterEmitPatches
 {
-    private const string IsExternalInitFullName =
-        "System.Runtime.CompilerServices.IsExternalInit";
+    private const string IsExternalInitFullName = "System.Runtime.CompilerServices.IsExternalInit";
 
     // setter -> backing field to store into, or null when not a rewritable
     // trivial init-only auto-property. Doubles as a per-setter analysis cache so

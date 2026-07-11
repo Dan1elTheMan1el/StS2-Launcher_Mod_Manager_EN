@@ -124,6 +124,7 @@ public static class ModEntry
             MerchantLayoutPatches.Apply(_harmony);
             AppLifecyclePatches.Apply(_harmony);
             TouchInputPatches.Apply(_harmony);
+            GameInputSuppressPatches.Apply(_harmony);
             CardRewardPatches.Apply(_harmony);
             EarlyAccessDisclaimerPatches.Apply(_harmony);
             FeedbackScreenPatches.Apply(_harmony);

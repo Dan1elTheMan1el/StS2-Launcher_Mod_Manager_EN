@@ -46,7 +46,8 @@ public static class ProgressRecoveryGate
         try
         {
             cloudHasExisting =
-                cloud.FileExists(progressPath) && cloud.GetFileSize(progressPath) > EmptyByteThreshold;
+                cloud.FileExists(progressPath)
+                && cloud.GetFileSize(progressPath) > EmptyByteThreshold;
         }
         catch (Exception ex)
         {
@@ -84,7 +85,9 @@ public static class ProgressRecoveryGate
     // frame loop that has to process the deferred call.
     private static Task<bool> AskUserAsync()
     {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         try
         {
             if (Engine.GetMainLoop() is not SceneTree tree || tree.Root == null)
@@ -129,7 +132,9 @@ public static class ProgressRecoveryGate
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Cloud] Recovered-session confirm dialog failed, allowing push: {ex.Message}");
+            PatchHelper.Log(
+                $"[Cloud] Recovered-session confirm dialog failed, allowing push: {ex.Message}"
+            );
             tcs.TrySetResult(true); // fail-open
         }
     }

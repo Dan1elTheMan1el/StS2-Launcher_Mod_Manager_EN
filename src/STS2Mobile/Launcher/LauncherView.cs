@@ -17,6 +17,7 @@ public class LauncherView
     public ActionSection Actions { get; }
     public ModManagerSection ModManager { get; }
     public StyledButton ModManagerButton { get; }
+    public StyledButton ModsButton { get; }
     public LogView Log { get; }
     public StyledButton DebugButton { get; }
 
@@ -34,6 +35,26 @@ public class LauncherView
         _parent = parent;
         _scale = scale;
         parent.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+
+        // The launcher UI otherwise inherits Godot's built-in Latin-only default
+        // font, so CJK mod names (e.g. Workshop titles like "海克斯符文" or Japanese
+        // mods) render as tofu boxes. Apply a SystemFont with OS fallback as the
+        // theme's default font on the launcher root — on Android this resolves
+        // through the system stack (Roboto → NotoSansCJK) and cascades to every
+        // descendant Control (labels, buttons, line edits). Scoped to the launcher
+        // tree, so the game's own theming is untouched.
+        try
+        {
+            var sysFont = new SystemFont();
+            sysFont.FontNames = new[] { "sans-serif" };
+            sysFont.AllowSystemFallback = true;
+            var theme = new Theme { DefaultFont = sysFont };
+            parent.Theme = theme;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] Failed to set CJK-capable theme font: {ex.Message}");
+        }
 
         var vpSize = parent.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1920, 1080);
 
@@ -63,19 +84,21 @@ public class LauncherView
         if (vp != null)
             vp.SizeChanged += () =>
             {
-                var newSize = vp.GetVisibleRect().Size;
-                parent.Size = newSize;
-                _panel.UpdateSizeFromViewport(newSize);
-                // Don't recapture _panelBaseY here. The virtual keyboard appearing
-                // also fires SizeChanged (viewport shrinks for the keyboard), and
-                // by the time we run, UpdateKeyboardOffset has already moved
-                // _panel.Position.Y up by the offset. Capturing now would lock the
-                // base at the offset-up position, leaving the panel stuck high
-                // after the keyboard dismisses. The panel is a FullRect-anchored
-                // CenterContainer so its natural position stays (0,0) regardless
-                // of viewport size — the initial capture is enough.
-                PatchHelper.Log($"[Launcher] Viewport SizeChanged -> {newSize}; panel resized");
+                // Wrapped: an exception thrown from a signal callback is swallowed
+                // by the native emitter (only ExceptionUtils logs it, with the C#
+                // frames elided) — device logs showed an unattributed NRE during
+                // orientation flips. Log the full exception here to pinpoint it.
+                try
+                {
+                    OnViewportSizeChanged();
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log($"[Launcher] Viewport SizeChanged handler failed: {ex}");
+                }
             };
+        else
+            PatchHelper.Log("[Launcher] No viewport at construction; resize hook skipped");
 
         var hbox = new HBoxContainer();
         hbox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -114,14 +137,14 @@ public class LauncherView
         Actions = new ActionSection(scale);
         left.AddChild(Actions);
 
-        ModManager = new ModManagerSection(scale);
-        ModManager.ConfirmationRequested += (message, onOk, onCancel) =>
-            ShowConfirmation(message, onOk, onCancel);
-        left.AddChild(ModManager);
+        // Issue #58: entry point to the full-screen Mod Hub (revived WIP flow).
+        ModsButton = new StyledButton("MOD MANAGER", scale, fontSize: 14, height: 40);
+        ModsButton.Visible = false;
+        left.AddChild(ModsButton);
 
         // Repurposed in 0.3.0: opens the Save Sync dialog instead of the WIP
-        // mod manager screen. The ModManagerSection above is still constructed
-        // for future use but no longer reachable from this button.
+        // mod manager screen (that flow is now the Mod Hub, reachable via
+        // ModsButton above since issue #58).
         ModManagerButton = new StyledButton("SAVE MANAGER", scale, fontSize: 14, height: 40);
         ModManagerButton.Visible = false;
         left.AddChild(ModManagerButton);
@@ -169,7 +192,19 @@ public class LauncherView
         Log.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         Log.GuiInput += DismissKeyboard;
         right.AddChild(Log);
+
+        // Issue #58: the Mod Hub covers the whole panel (both columns) instead
+        // of living inside the left column — the Workshop browser and mod list
+        // need the full width on phones. ShowModManager() swaps it in for the
+        // main two-column layout.
+        _mainHbox = hbox;
+        ModManager = new ModManagerSection(scale);
+        ModManager.ConfirmationRequested += (message, onOk, onCancel) =>
+            ShowConfirmation(message, onOk, onCancel);
+        _panel.Content.AddChild(ModManager);
     }
+
+    private readonly HBoxContainer _mainHbox;
 
     private readonly float _scale;
 
@@ -184,6 +219,11 @@ public class LauncherView
     {
         Actions.SetSyncBusy(busy);
         ModManagerButton.Disabled = busy;
+        // Issue #58: the Mod Hub entry button (MOD MANAGER) was the one button the
+        // cloud-op freeze missed. Lock it too so the user can't open the Mod Hub
+        // (and start Workshop downloads that also touch external storage) while a
+        // cloud save sync is mid-flight.
+        ModsButton.Disabled = busy;
     }
 
     public void SetStatus(string text) => _statusLabel.Text = text;
@@ -198,21 +238,87 @@ public class LauncherView
         Code.Visible = false;
         Download.Visible = false;
         Actions.HideAll();
-        ModManager.Visible = false;
+        ModsButton.Visible = false;
         ModManagerButton.Visible = false;
     }
 
     public void ShowModManager()
     {
         HideAllSections();
+        _mainHbox.Visible = false;
         ModManager.Visible = true;
         ModManager.Refresh();
+    }
+
+    public void HideModManager()
+    {
+        ModManager.Visible = false;
+        _mainHbox.Visible = true;
+    }
+
+    // Issue #58: flip the launcher between landscape (default) and portrait for the
+    // Mod Hub only. Swaps the pinned ContentScaleSize so the whole UI tree
+    // re-stretches; the viewport SizeChanged handler (constructor) then resizes the
+    // panel. The game sets its own orientation on launch, so this never leaks out.
+    // Body of the viewport SizeChanged hook (fold/unfold/rotate/keyboard).
+    private void OnViewportSizeChanged()
+    {
+        var vp = _parent.GetViewport();
+        if (vp == null)
+            return;
+        var newSize = vp.GetVisibleRect().Size;
+        _parent.Size = newSize;
+        _panel.UpdateSizeFromViewport(newSize);
+        // Don't recapture _panelBaseY here. The virtual keyboard appearing
+        // also fires SizeChanged (viewport shrinks for the keyboard), and
+        // by the time we run, UpdateKeyboardOffset has already moved
+        // _panel.Position.Y up by the offset. Capturing now would lock the
+        // base at the offset-up position, leaving the panel stuck high
+        // after the keyboard dismisses. The panel is a FullRect-anchored
+        // CenterContainer so its natural position stays (0,0) regardless
+        // of viewport size — the initial capture is enough.
+        PatchHelper.Log($"[Launcher] Viewport SizeChanged -> {newSize}; panel resized");
+    }
+
+    public void SetModHubOrientation(bool portrait)
+    {
+        try
+        {
+            DisplayServer.ScreenSetOrientation(
+                portrait
+                    ? DisplayServer.ScreenOrientation.Portrait
+                    : DisplayServer.ScreenOrientation.SensorLandscape
+            );
+            var window = _parent.GetWindow();
+            if (window != null)
+                window.ContentScaleSize = portrait
+                    ? new Vector2I(1080, 1920)
+                    : new Vector2I(1920, 1080);
+            var vp = _parent.GetViewport();
+            if (vp != null)
+            {
+                var newSize = vp.GetVisibleRect().Size;
+                _parent.Size = newSize;
+                _panel.UpdateSizeFromViewport(newSize);
+            }
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] SetModHubOrientation failed: {ex.Message}");
+        }
     }
 
     public void UpdateKeyboardOffset()
     {
         var kbHeight = DisplayServer.VirtualKeyboardGetHeight();
-        if (kbHeight > 0)
+
+        // The full-screen Mod Hub already keeps its focused field (the Workshop
+        // search box) near the top, above the keyboard. Lifting the whole panel up
+        // by the keyboard height then pushes that field — and the tab bar — off the
+        // top of the screen, so the user can't see what they're typing. Keep the
+        // panel pinned while the Mod Hub is open; the main launcher (compact,
+        // centered) still lifts so its lower fields clear the keyboard.
+        if (kbHeight > 0 && !ModManager.Visible)
         {
             var windowSize = DisplayServer.WindowGetSize();
             var vpSize = _parent.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1920, 1080);

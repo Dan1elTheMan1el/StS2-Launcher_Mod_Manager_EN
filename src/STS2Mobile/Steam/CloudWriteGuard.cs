@@ -86,9 +86,7 @@ public static class CloudWriteGuard
                 reason =
                     $"빈 내용({newByteLength} bytes) 쓰기를 차단했습니다. "
                     + "클라우드 상태를 아직 확인하지 못해 안전을 위해 보류합니다.";
-                PatchHelper.Log(
-                    $"{Tag} BLOCK(cache-not-loaded) {canonPath}: new={newByteLength}B"
-                );
+                PatchHelper.Log($"{Tag} BLOCK(cache-not-loaded) {canonPath}: new={newByteLength}B");
                 return true;
             }
 

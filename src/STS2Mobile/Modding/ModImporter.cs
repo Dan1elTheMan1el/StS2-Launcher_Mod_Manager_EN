@@ -34,13 +34,10 @@ public static class ModImporter
             Directory.CreateDirectory(tempRoot);
             SafeExtract(zipPath, tempRoot);
 
-            var modRoot = FindModRoot(tempRoot);
-            if (modRoot == null)
-                return Fail("Selected zip is not a StS2 mod (mod_manifest.json not found).");
+            if (!ModManifest.TryFindManifest(tempRoot, out var manifest, out var manifestPath))
+                return Fail("Selected zip is not a StS2 mod (no manifest .json with an 'id').");
 
-            var manifest = ModManifest.TryParse(Path.Combine(modRoot, "mod_manifest.json"));
-            if (manifest == null || !manifest.IsValid())
-                return Fail("mod_manifest.json is missing or has no 'id' field.");
+            var modRoot = Path.GetDirectoryName(manifestPath);
 
             if (!IsValidId(manifest.Id))
                 return Fail($"Invalid mod id: '{manifest.Id}'");
@@ -84,27 +81,6 @@ public static class ModImporter
     }
 
     public static void CleanupImportZip(string zipPath) => TryDeleteFile(zipPath);
-
-    private static string FindModRoot(string tempRoot)
-    {
-        if (File.Exists(Path.Combine(tempRoot, "mod_manifest.json")))
-            return tempRoot;
-
-        var subdirs = Directory.GetDirectories(tempRoot);
-        if (subdirs.Length == 1 && File.Exists(Path.Combine(subdirs[0], "mod_manifest.json")))
-            return subdirs[0];
-
-        foreach (
-            var path in Directory.EnumerateFiles(
-                tempRoot,
-                "mod_manifest.json",
-                SearchOption.AllDirectories
-            )
-        )
-            return Path.GetDirectoryName(path);
-
-        return null;
-    }
 
     // Extracts with Zip Slip protection — any entry whose resolved path escapes
     // the destination root is rejected.
@@ -152,6 +128,10 @@ public static class ModImporter
     {
         if (string.IsNullOrWhiteSpace(id))
             return false;
+        // "." and ".." are path segments, not mod ids — reject them so Mods/<id>
+        // can never resolve to the Mods dir itself or its parent.
+        if (id == "." || id == "..")
+            return false;
         foreach (var c in id)
         {
             if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
@@ -160,19 +140,32 @@ public static class ModImporter
         return true;
     }
 
-    public static bool DeleteMod(string modId)
+    // Deletes a mod by its top-level folder (folder name is no longer assumed to
+    // equal the id — issue #58) and drops its config entry. The folder must resolve
+    // to a direct child of ExternalModsDir, guarding against a traversal escape.
+    public static bool DeleteMod(string topLevelDir, string modId)
     {
-        if (!IsValidId(modId))
-            return false;
         try
         {
-            var dir = Path.Combine(AppPaths.ExternalModsDir, modId);
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
+            if (!string.IsNullOrEmpty(topLevelDir))
+            {
+                if (!AppPaths.IsDirectChildOfModsDir(topLevelDir))
+                {
+                    PatchHelper.Log(
+                        $"[Mods] Refusing to delete '{topLevelDir}': not a direct child of Mods."
+                    );
+                    return false;
+                }
+                if (Directory.Exists(topLevelDir))
+                    Directory.Delete(topLevelDir, recursive: true);
+            }
 
-            var cfg = ModConfig.Load();
-            cfg.Remove(modId);
-            cfg.Save();
+            if (!string.IsNullOrEmpty(modId))
+            {
+                var cfg = ModConfig.Load();
+                cfg.Remove(modId);
+                cfg.Save();
+            }
             return true;
         }
         catch (Exception ex)

@@ -88,11 +88,7 @@ public static class LocalBackupService
             {
                 TryDeleteDir(setDir); // no non-empty saves — don't leave an empty folder
                 PatchHelper.Log($"{Tag} manual: no non-empty saves found, skipped");
-                return new BackupResult
-                {
-                    Success = false,
-                    Error = "백업할 세이브가 없습니다.",
-                };
+                return new BackupResult { Success = false, Error = "백업할 세이브가 없습니다." };
             }
 
             PatchHelper.Log($"{Tag} manual OK: {count} files, {bytes}B → {setDir}");
