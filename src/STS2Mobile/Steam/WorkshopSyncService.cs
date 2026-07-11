@@ -504,7 +504,7 @@ public static class WorkshopSyncService
         var cfg = ModConfig.Load();
         var conf = cfg.ConflictRecords.FirstOrDefault(c => c.PublishedFileId == publishedFileId);
         var targetId = conf?.ModId;
-        if (targetId != null && IsValidId(targetId))
+        if (targetId != null && ModIdValidator.IsValidId(targetId))
         {
             foreach (var m in ModScanner.Scan().Where(s => s.Id == targetId).ToList())
             {
@@ -539,7 +539,7 @@ public static class WorkshopSyncService
         WorkshopSyncResult result
     )
     {
-        if (string.IsNullOrEmpty(mod.Id) || !IsValidId(mod.Id))
+        if (string.IsNullOrEmpty(mod.Id) || !ModIdValidator.IsValidId(mod.Id))
         {
             PatchHelper.Log($"[Workshop] Refusing removal of invalid id '{mod.Id}'");
             return false;
@@ -615,19 +615,4 @@ public static class WorkshopSyncService
         return true;
     }
 
-    private static bool IsValidId(string id)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-            return false;
-        // "." and ".." are path segments, not mod ids — reject them so an id can
-        // never resolve to the Mods dir itself or its parent.
-        if (id == "." || id == "..")
-            return false;
-        foreach (var c in id)
-        {
-            if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
-                return false;
-        }
-        return true;
-    }
 }

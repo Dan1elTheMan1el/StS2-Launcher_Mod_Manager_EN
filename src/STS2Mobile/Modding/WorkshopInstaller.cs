@@ -145,7 +145,7 @@ public static class WorkshopInstaller
 
             var modRoot = Path.GetDirectoryName(manifestPath);
 
-            if (!IsValidId(manifest.Id))
+            if (!ModIdValidator.IsValidId(manifest.Id))
                 return new WorkshopInstallResult
                 {
                     Success = false,
@@ -258,22 +258,6 @@ public static class WorkshopInstaller
             PatchHelper.Log($"[Workshop] Install failed for {item.PublishedFileId}: {ex}");
             return new WorkshopInstallResult { Success = false, Error = ex.Message };
         }
-    }
-
-    private static bool IsValidId(string id)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-            return false;
-        // "." and ".." are path segments, not mod ids — reject them so Mods/<id>
-        // can never resolve to the Mods dir itself or its parent.
-        if (id == "." || id == "..")
-            return false;
-        foreach (var c in id)
-        {
-            if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
-                return false;
-        }
-        return true;
     }
 
     private static void TryDeleteDir(string path)

@@ -39,7 +39,7 @@ public static class ModImporter
 
             var modRoot = Path.GetDirectoryName(manifestPath);
 
-            if (!IsValidId(manifest.Id))
+            if (!ModIdValidator.IsValidId(manifest.Id))
                 return Fail($"Invalid mod id: '{manifest.Id}'");
 
             Directory.CreateDirectory(AppPaths.ExternalModsDir);
@@ -122,22 +122,6 @@ public static class ModImporter
             File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
         foreach (var sub in Directory.EnumerateDirectories(src))
             CopyDirectory(sub, Path.Combine(dest, Path.GetFileName(sub)));
-    }
-
-    private static bool IsValidId(string id)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-            return false;
-        // "." and ".." are path segments, not mod ids — reject them so Mods/<id>
-        // can never resolve to the Mods dir itself or its parent.
-        if (id == "." || id == "..")
-            return false;
-        foreach (var c in id)
-        {
-            if (!(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.'))
-                return false;
-        }
-        return true;
     }
 
     // Deletes a mod by its top-level folder (folder name is no longer assumed to
