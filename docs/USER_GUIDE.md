@@ -19,7 +19,7 @@
 9. [Save Manager 다이얼로그 사용법](#9-save-manager-다이얼로그-사용법)
 10. [수동 Push / Pull](#10-수동-push--pull)
 11. [Local Backup (세이브 백업)](#11-local-backup-세이브-백업)
-12. [모드 설치 (선택)](#12-모드-설치-선택)
+12. [모드 설치 — 창작마당(Workshop) / 보관 / 수동 (선택)](#12-모드-설치-선택)
 13. [런처 자동 업데이트 (CHECK LAUNCHER UPDATE)](#13-런처-자동-업데이트-check-launcher-update)
 14. [디버그 로그 (Debug 토글)](#14-디버그-로그-debug-토글)
 15. [자주 묻는 질문 (FAQ)](#15-자주-묻는-질문-faq)
@@ -104,12 +104,13 @@
 | **CHECK LAUNCHER UPDATE** 버튼 | 런처 APK 새 버전이 GitHub 에 있는지 확인 + 인앱 다운로드 / 설치 | [13번](#13-런처-자동-업데이트-check-launcher-update) |
 | **Auto Sync** 토글 | Steam Cloud 와의 자동 동기화 ON/OFF | [8번](#8-auto-sync-토글) |
 | **SAVE MANAGER** 버튼 | 현재 sync 상태 확인 + 강제 재sync 다이얼로그. cloud / local 비교 + 수동 결정 | [9번](#9-save-manager-다이얼로그-사용법) |
+| **MOD MANAGER** 버튼 | Mod Hub — Steam 창작마당 검색·구독·자동 다운로드 + 모드 보관/삭제 (v0.3.34+) | [12번](#12-모드-설치-선택) |
 | **Push** 버튼 | 모든 saves 를 Steam Cloud 로 강제 업로드 (특수 상황용) | [10번](#10-수동-push--pull) |
 | **Pull** 버튼 | Steam Cloud 의 모든 saves 를 폰으로 강제 다운로드 (특수 상황용) | [10번](#10-수동-push--pull) |
 | **Local Backup** 버튼 | 누르면 현재 세이브 트리 전체를 외부 저장공간에 스냅샷으로 백업 (수동). PLAY 시 핸드셰이크에서도 자동 백업 | [11번](#11-local-backup-세이브-백업) |
 | **Debug** 토글 (Console 옆) | logcat 캡처를 외부 저장공간에 저장 (기본 ON, 부팅부터 게임 진입까지 전체 로그) | [14번](#14-디버그-로그-debug-토글) |
 
-> 모드 매니저 버튼은 0.3.0 부터 위 SAVE MANAGER 로 변경됐습니다. 모드 설치는 외부 파일 매니저로 진행 — [12번](#12-모드-설치-선택) 참조.
+> 0.3.0 ~ 0.3.33 에서는 모드 매니저 자리가 SAVE MANAGER 버튼으로 대체되어 있었지만, **v0.3.34 부터 MOD MANAGER 버튼이 창작마당 지원과 함께 복귀**했습니다. 모드 설치는 [12번](#12-모드-설치-선택) 참조.
 
 ---
 
@@ -151,7 +152,7 @@
 
 - **새 브랜치는 풀 재다운로드** (~3GB). delta 다운로드 사용 안 함 — 브랜치 간 binary 차이가 byte 단위로 호환되지 않을 수 있어 의도적으로 처음부터 다시 받음.
 - **saves / Steam 로그인 / 모드 설정은 보존**됩니다. 게임 파일 (`game/`, `download_state/`) 만 새로 받음.
-- **PC 와 브랜치를 일치시키세요** — 다른 브랜치끼리는 Steam Cloud sync 가 충돌할 수 있음. [FAQ](#13-자주-묻는-질문-faq) 의 브랜치 일치 항목 참조.
+- **PC 와 브랜치를 일치시키세요** — 다른 브랜치끼리는 Steam Cloud sync 가 충돌할 수 있음. [FAQ](#15-자주-묻는-질문-faq) 의 브랜치 일치 항목 참조.
 
 ### 이미지 인덱스 깨짐 회복 — 이미지 캐시 정리 (v0.3.19+)
 
@@ -331,7 +332,70 @@ steam/<SteamID>/[modded/]profile<N>/saves/<파일명>
 
 ## 12. 모드 설치 (선택)
 
-모드를 사용하려면:
+모드 설치 방법은 두 가지입니다 — **창작마당(Workshop) 구독 (권장, v0.3.34+)** 과 **수동 설치**. 두 방식은 같은 `Mods/` 폴더를 쓰므로 섞어 써도 됩니다.
+
+### 12-1. 창작마당(Workshop)으로 설치 — 권장
+
+런처 홈 화면에서 **MOD MANAGER** 버튼을 탭하면 **Mod Hub** 가 열립니다. 창작마당 기능은 Steam 로그인이 되어 있어야 사용할 수 있습니다.
+
+  <img src="images/workshop_1.png" width="600">
+
+Mod Hub 는 4개 탭으로 구성됩니다:
+
+| 탭 | 기능 |
+|---|---|
+| **WORKSHOP** | 창작마당 검색·구독. 정렬 (인기 / 신규 / 트렌드 / 최근업데이트 / 평점) + 태그 필터 + 무한 스크롤 |
+| **SUBSCRIBED** | 구독 중 모드 목록 (Steam 계정과 동기화). DETAIL / DISABLE / UNSUBSCRIBE |
+| **LOCAL** | 수동 설치한 (창작마당 외) 모드 목록 |
+| **DOWNLOADS** | 다운로드 진행 상황 |
+
+우상단 **가로/세로** 토글로 Mod Hub UI 를 회전할 수 있습니다 (폰을 세로로 들고 쓸 때).
+
+  <img src="images/workshop_2.png" width="600">
+
+#### 검색·구독 (작동 방식)
+
+- 검색은 **제목 / 본문 텍스트 / 창작마당 URL·ID 붙여넣기** 3가지 형식을 지원합니다. 목록에 안 뜨는 (unlisted) 모드도 URL/ID 로 직접 조회·구독할 수 있습니다.
+- **SUBSCRIBE** 를 누르면 Steam 계정에 구독이 등록되고 즉시 다운로드가 시작됩니다. 다운로드된 모드는 수동 설치와 같은 `/storage/emulated/0/StS2LauncherMM/Mods/` 폴더에 저장됩니다.
+
+  <img src="images/workshop_3.png" width="600">
+
+- 설치된 모드의 출처 (창작마당 / 수동) 와 활성 상태는 `Mods/mod_config.json` 에 기록됩니다. 파일 매니저로 직접 열어 확인할 수 있습니다.
+
+  <img src="images/workshop_4.png" width="600">
+
+- **자동 업데이트** — Mod Hub 에 들어올 때마다 구독 모드의 업데이트를 확인하고 자동으로 내려받습니다.
+- **의존성 안내** — 구독한 모드에 필수 모드 (예: BaseLib) 가 있으면 목록 모달이 떠서 바로 구독할 수 있습니다.
+- **DETAIL** 을 누르면 상세페이지가 열립니다 — 설명 / 업데이트 노트 (창작마당 변경내역 그대로) / 토론 / 댓글 4개 탭. 토론·댓글 본문은 Steam 커뮤니티 페이지를 브라우저로 열어 보여줍니다.
+
+  <img src="images/workshop_7.png" width="600">
+
+> 다운로드가 진행 중일 때 Mod Hub 를 나가면 다운로드가 취소됩니다 (나가기 전에 경고 표시).
+
+#### 게임에서 확인
+
+구독한 모드는 수동 설치 모드와 함께 게임의 **설치된 모드** 목록에 나타납니다. 첫 실행이라면 아래 12-3 의 "Load mods?" 다이얼로그 흐름과 동일하게 진행하면 됩니다.
+
+  <img src="images/workshop_8.png" width="600">
+
+### 12-2. 모드 보관 (DISABLE / ENABLE)
+
+**UNSUBSCRIBE (구독 해제) 를 누르면 모드가 기기에서 삭제**됩니다. 삭제하지 않고 잠시 끄고 싶으면 **DISABLE** 을 쓰세요 — 상황에 맞게 골라 쓰면 됩니다.
+
+| 버튼 | 동작 |
+|---|---|
+| **DISABLE** | 모드를 `StS2LauncherMM/ModsDisabled/` 로 이동 — 게임에서만 숨김, 파일은 보존 |
+| **ENABLE** | 즉시 복구 (재다운로드 없음). 보관 중 밀린 업데이트가 있으면 받을지 물어봄 |
+| **UNSUBSCRIBE** | 구독 해제 + 기기에서 모드 폴더 삭제 |
+
+  <img src="images/workshop_5.png" width="600">
+
+- 보관 (DISABLE) 중인 모드는 업데이트를 받지 않습니다.
+- 파일 매니저로 `Mods/` ↔ `ModsDisabled/` 사이에서 폴더를 직접 옮겨도 동일하게 인식됩니다 (디스크 상태가 기준).
+
+### 12-3. 수동 설치 (파일 매니저)
+
+창작마당에 없는 모드는 기존 방식대로 직접 폴더에 넣습니다:
 
 1. **[ZArchiver](https://play.google.com/store/apps/details?id=ru.zdevs.zarchiver)** (Play Store 무료) 를 다운받아 사용을 권장합니다. 삼성 **내 파일** 등 일부 OEM 기본 파일 매니저는 안드로이드 scoped storage 정책 때문에 `/storage/emulated/0/StS2LauncherMM/` 경로가 보이지 않을 수 있습니다 (실제 검증).
 2. ZArchiver 로 `/storage/emulated/0/StS2LauncherMM/Mods/` 경로 진입.
@@ -344,6 +408,21 @@ steam/<SteamID>/[modded/]profile<N>/saves/<파일명>
 4. 게임 실행 시 게임 본체의 **"Load mods?"** 다이얼로그가 뜨면 OK 탭. 한 번 선택하면 그 다음부터 자동 로드.
 
   <img src="images/22.jpg" width="600">
+
+수동 설치한 모드는 Mod Hub 의 **LOCAL** 탭과 `mod_config.json` 에도 나타나며, 창작마당 모드와 함께 사용할 수 있습니다:
+
+  <img src="images/workshop_6.png" width="600">
+
+### 12-4. 모드 호환성 주의
+
+창작마당으로 모드 접근성이 좋아졌지만, **PC 와 모바일은 환경이 구조적으로 달라서** 다음 기능을 포함한 모드는 모바일에서 작동하지 않습니다:
+
+1. **P2P 게임 트래픽** (Steam NetworkingSockets / SDR)
+2. **오버레이, SteamInput** — Steam 클라이언트 프로세스의 기능이라 프로토콜 수준에서 구현 불가 (예: QuickReload)
+
+모드가 작동하지 않으면 [14번 항목](#14-디버그-로그-debug-토글)의 디버그 로그와 함께 [이슈](https://github.com/iunius612/StS2-Launcher_Mod_Manager/issues)로 제보해 주세요.
+
+> **모드 세이브 병합 관련**: 게임 업데이트로 Save 저장 로직이 변경되면서 **UnifiedSave 모드는 사용할 수 없습니다.** 모드 세이브 병합이 필요하면 [SaveMerger](https://steamcommunity.com/sharedfiles/filedetails/?id=3748139900) 를 사용하세요. 세이브를 건드리는 모드를 쓰기 전에는 [Local Backup](#11-local-backup-세이브-백업) 으로 스냅샷을 만들어 두는 것을 권장합니다.
 
 ---
 

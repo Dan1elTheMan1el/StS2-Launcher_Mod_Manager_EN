@@ -1,228 +1,132 @@
-# StS2 Launcher Mod (Mod Manager Fork)
+# StS2 Launcher Mod Manager
 
-An Android launcher for Slay the Spire 2, built on a custom Godot 4.5.1 engine with .NET/Mono and Harmony runtime patching.
+**English** | [한국어](README.ko.md)
 
-> **Fork notice**: This is a community fork of [Ekyso/StS2-Launcher](https://github.com/Ekyso/StS2-Launcher). The upstream launcher's mod loader stopped working with recent game builds; this fork fixes that, adds a Save Manager + cloud-conflict resolution, and adds a few mobile-UX tweaks. See the **Fork changes** sections below (latest first).
+An Android launcher + mod manager for **Slay the Spire 2**, built on a custom Godot 4.5.1 engine with .NET/Mono and Harmony runtime patching. Log in with Steam, download the game, browse the Steam Workshop, and play with mods — all on your phone.
 
-> **Disclaimer**: This is an unofficial community project. Slay the Spire 2 is developed and published by Mega Crit Games. A valid Steam account that owns Slay the Spire 2 is required. Game files are downloaded directly from Steam after authentication. No game assets are included in this repository.
+**Current release: [v0.3.34](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases/latest)** (versionCode 314)
 
-> **사용설명서 (한국어)**: 처음 설치하는 사용자를 위한 단계별 가이드는 [docs/USER_GUIDE.md](docs/USER_GUIDE.md) 참조.
+> **📖 사용설명서 (한국어)** — 설치부터 모드/세이브 관리까지 스크린샷과 함께 설명하는 단계별 가이드: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**
 
-## Fork changes (v0.3.11)
+> **Fork notice** — This is a community fork of [Ekyso/StS2-Launcher](https://github.com/Ekyso/StS2-Launcher). The upstream launcher's mod loader stopped working with newer game builds; this fork keeps mod loading compatible with each game update and adds Workshop support, save-data safety features, and mobile-UX improvements. See [Differences from upstream](#differences-from-upstream).
 
-Versioned as **0.3.11 (versionCode 254)**. Drop-in upgrade from 0.3.x — saves and credentials carry over. Headlines issue #12 (launcher self-update flow) and adds opt-out diagnostic logging for issue #11. 0.3.4 through 0.3.10 were intermediate test releases; this is the first formal release that consolidates them.
+> **Disclaimer** — Unofficial community project. Slay the Spire 2 is developed and published by Mega Crit Games. A valid Steam account that owns Slay the Spire 2 is required; game files are downloaded directly from Steam after authentication. No game assets are included in this repository.
 
-### What's fixed / added
+## Getting started (players)
 
-1. **Launcher self-update flow (issue #12).** The single `CHECK FOR UPDATES` button used to run game-manifest comparison and launcher-APK comparison in parallel but only surfaced the game result; the launcher result was logged as one yellow line that users never noticed. The launcher comparison was also pointed at the upstream `Ekyso/StS2-Launcher` repo, so this fork's `v0.3.x` releases were never matched. Net effect: the feature was a noop. This release:
-   - Splits the button into `CHECK GAME UPDATE` / `CHECK LAUNCHER UPDATE` — independent flows, independent busy state, independent result UI.
-   - Repoints the launcher comparison at `iunius612/StS2-Launcher_Mod_Manager`'s latest release.
-   - Fixes a version-comparison bug where `release.name = "v0.3.3 — BaseLib v3.x mobile..."` dot-split failed to parse and silently treated current as latest. Now uses `tag_name` and extracts only the leading numeric/dot prefix.
-   - Adds an automatic launcher-update check on boot, surfacing a dialog only when a newer version exists.
-   - Adds an in-app download + install flow: dialog confirm → `HttpClient` stream APK to cache (with progress) → `Intent.ACTION_VIEW` to the system installer. Falls back to opening the GitHub release page if no APK asset is attached. Walks the user to system settings if "install from this source" is off.
-   - Pressing `CHECK LAUNCHER UPDATE` while already up to date now surfaces a dialog instead of silently no-op'ing.
+1. Download the latest `StS2Launcher-vX.Y.Z.apk` from the [Releases page](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases/latest) and install it.
+2. Launch, grant "All files access", and log in with your Steam account (Steam Guard 2FA supported).
+3. Pick a Steam branch and download the game (~3 GB), then tap **PLAY**.
 
-2. **Device/render diagnostic logging (issue #11).** A user reported horizontal tear striping in the black background area when running fullscreen single-window on a Galaxy Z Fold6 (`SM-F956N`, unfolded native 2160×1856 ≈ 1.164:1). Reproduces on the upstream Ekyso launcher too, and disappears in split-screen or with the in-game letterbox setting — so the trigger is a Vulkan/SurfaceFlinger swapchain interaction with the Fold6's non-standard aspect, not anything in our patches. The dev test device (Fold7, 1.109:1, even more square) does **not** reproduce, which rules out aspect ratio as the sole cause and points at the Fold6 GPU driver / OneUI 6.1 firmware. Without dev-side reproduction, this release adds opt-out diagnostic logging that the reporter can turn on (Debug toggle is default ON, so logs are auto-captured to `/storage/emulated/0/StS2LauncherMM/Logs/`):
-   - `RenderDiagnosticPatches` writes a one-shot boot record (OS / model / video adapter name+vendor+API version / project rendering method / screen physical size, DPI, refresh rate) and a `Window.SizeChanged` record (window size, visible rect, ContentScaleSize/mode/aspect, ratio) every time the user folds, unfolds, rotates, or enters/leaves split-screen.
-   - `GodotApp.onCreate` adds a one-line `Build.MANUFACTURER / MODEL / Android version / firmware build ID` log so the same diagnostic can split firmware revisions on the same hardware.
-   - All logs are tagged `[Diag/Fold]`. Both events are low-frequency (boot once, plus user-driven fold/rotate transitions) and the log path is asynchronous (`Console.Error.WriteLine` → logcat pipe), so this has no FPS impact.
+Full walkthrough with screenshots: [사용설명서 (USER_GUIDE.md)](docs/USER_GUIDE.md). Upgrading between fork versions is a drop-in APK install — saves, login, and the game payload are preserved.
 
-### Cumulative fixes from 0.3.4 — 0.3.10
+## Differences from upstream
 
-These shipped as test releases while issue #12 was being verified on devices and follow-up regressions were caught:
+The fork diverged from `Ekyso/StS2-Launcher` in April 2026. Everything below is fork-added; per-version details live on the [Releases page](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases).
 
-- **Screen auto-rotation (sensorLandscape).** `android:screenOrientation` flipped from `landscape` → `sensorLandscape`, with `DisplayServer.ScreenSetOrientation(SensorLandscape)` from C# at launcher init to override the game PCK's `display/window/handheld/orientation` setting (which Godot applies at runtime and silently overrides the manifest). Lets users flip the device 180° (e.g. for USB-C charging-cable position) and have the screen follow.
-- **Wide-display layout.** Removed launcher-panel hard caps (`MaxWidth=1400`, `MaxHeight=800`) and switched font/padding scale from `Math.Max(vpX, vpY)` to `Math.Min(vpX, vpY)` so panels fill 21:9-class screens (e.g. Fold7 unfolded 2520×1080) without large black margins, and widget heights track the shorter axis. Subscribed to viewport `SizeChanged` so panels reflow on `sensorLandscape` rotation, fold/unfold, and multi-window resize.
-- **Pinned Window content scale.** `ContentScaleSize=(1920,1080)` + `CanvasItems` + `Expand` so widget scale is computed from a stable logical canvas instead of the visible rect (which `Expand` warps along the wider physical axis on fold/unfold and previously gave wildly different scales per posture).
-- **Storage permission re-prompt loop.** If the user denies "All files access" the launcher now keeps re-prompting on subsequent launches instead of falling through to a silent broken state. Log view also switched from 7:3 to 5:5 split so logs are readable while the user resolves the permission dialog.
-- **Keyboard offset stuck regression fix (0.3.10).** With the 0.3.8 `Viewport.SizeChanged` hook plus the existing `_panelBaseY` capture, virtual-keyboard activation could write the already-shifted panel position as the new base — closing the keyboard then "restored" to the shifted position and the panel stayed glued to the top. Drop the `_panelBaseY = _panel.Position.Y` re-capture inside the size-change hook; the panel's natural position is FullRect-anchored (0,0), so a single capture at construction is correct.
-- **Debug logcat toggle.** Persistent toggle (default ON), captured to `StS2LauncherMM/Logs/` with auto-rotation (max 20 files). Lets users attach logs to issues without `adb`.
+### Mod loading that tracks game updates
 
-### Permission / config changes (cumulative since 0.3.3)
+- The upstream reflection-based mod loader crashes on current game builds (renamed private fields). Replaced with a Harmony IL transpiler that redirects the game's own mod scanner to `/storage/emulated/0/StS2LauncherMM/Mods/`.
+- Kept compatible through breaking game updates since then: v0.107 async-lowering changes (issue #47), v0.108 `ModelDb` contract change (issue #53), the v0.108 save-path helper signature change, and a general fix for init-setter properties under runtime IL re-emit that unblocked BaseLib 3.3.x (issue #55).
+- `tools/memberref-audit` statically audits our IL patches against a new game build before it ships, so signature breaks are caught before users hit them.
 
-- New permission `REQUEST_INSTALL_PACKAGES` added in 0.3.4 for the in-app installer flow. First self-update attempt walks the user through the system "install from this source" toggle (Android 8+).
-- 0.3.4 also overrides the Godot library's `FileProvider` paths xml (`godot_provider_paths.xml`) to add a `<cache-path>` entry — used to hand the downloaded APK to the system installer via a content URI.
+### Steam Workshop support (Mod Hub)
 
-## Fork changes (v0.3.3)
+Added in v0.3.34 (issue #58) — the **MOD MANAGER** button opens a full in-app Mod Hub:
 
-Versioned as **0.3.3 (versionCode 241)**. Drop-in upgrade from 0.3.x — saves and credentials carry over. Targets issue #8 (BaseLib v3.x crashes the game on PatchAll) and issue #9 (Android `release_info` not loaded → main-menu `????` build label + LAN multiplayer version mismatch).
+- **WORKSHOP tab** — browse/search the Workshop with sorting, tag filters, and infinite scroll; paste a Workshop URL/ID to find unlisted items; item detail pages with description, Steam change notes, discussions, and comments.
+- **SUBSCRIBED tab** — subscriptions sync with your Steam account; downloads, update detection, and dependency prompts are automatic. Unsubscribing removes the mod from the device.
+- **Mod stash (DISABLE)** — hide a mod from the game without deleting it (moved to `ModsDisabled/`, restored instantly with ENABLE, no re-download).
+- Downloads use SteamKit2 `PublishedFile` RPC + Steam depot CDN — no PC or Steamworks SDK involved.
 
-### What's fixed
+### Save-data safety
 
-1. **BaseLib v3.x mobile compat shim (issue #8).** BaseLib (Alchyr) v3.x and other mods that exercise its async hook system used to hang the game on a black screen during `PatchAll`. Symptom in logcat: a Godot native `BUG: Unreferenced static string to 0: _draw_rect` at `string_name.cpp:116`, followed by the renderer thread freezing while C# threads stay alive until the SteamKit2 connection idle-times out 30 s later.
+- **Cloud-save destruction fix (issue #4)** — the upstream launcher could silently overwrite real Steam Cloud progress with fresh-default saves when the cloud file cache wasn't loaded yet. The cloud store now blocks until the cache is ready and falls back to local-only mode when it isn't.
+- **Save Manager (issues #4/#7)** — explicit conflict-resolution dialog replaces silent timestamp-based sync: side-by-side local/cloud summary cards (including the in-progress run) with an explicit Keep Local / Keep Cloud choice, on every PLAY and on demand via the **SAVE MANAGER** button.
+- **Cloud write guard + Local Backup (issue #36)** — empty/abnormal writes are blocked at the single cloud-upload funnel, and full-tree save snapshots are taken manually (**LOCAL BACKUP** button, kept indefinitely) and automatically before every cloud handshake (FIFO-capped), so a wrong sync choice is recoverable.
 
-   Diagnosis (full notes in issue #8 comments):
-   - The crash fires immediately after BaseLib's `BaseLib.Utils.Patching.AsyncMethodCall.Create` injects new yield states into a compiler-emitted async state-machine `MoveNext` (e.g. `Hook+<AfterCardPlayed>d__15`).
-   - Initial hypothesis was the bundled `0Harmony.dll`'s `MonoILFixup` (an Ekyso-added IL post-pass) having inverted priority for raw-int local-index resolution. Ruled out by testing three override variants (LocalBuilder reuse / LocalVariableInfo reuse / leave raw operand untouched after `CecilILGenerator` local-count reflection check). All three produced the same crash at the same instruction.
-   - Real cause is downstream of `MonoILFixup`: BaseLib's emit sequence (`Box` / `BoxArg0` / generic `AwaitUnsafeOnCompleted` / hoisted-field `stfld`) triggers a memory corruption when committed via `MonoMod.Utils.Cil.CecilILGenerator` + runtime detour on Mono Android. The corruption happens to land on Godot's static `StringName` cache slot for `_draw_rect` (the `CanvasItem` virtual method name), driving its refcount below zero.
+### Launcher quality-of-life
 
-   Workaround in this release:
-   - New `BaseLibCompatPatches` registers an `AppDomain.AssemblyLoad` listener at launcher init. When `BaseLib.dll` loads (post-PLAY, via the game's mod loader), the listener Harmony-prefixes `BaseLib.Utils.Patching.AsyncMethodCall.Create` to return the original IL unchanged and skip the original method. The state-machine surgery never runs; everything else BaseLib does runs normally.
+- **Self-update (issue #12)** — separate `CHECK GAME UPDATE` / `CHECK LAUNCHER UPDATE` buttons, automatic update check on boot, and an in-app APK download + install flow.
+- **Steam branch picker** — choose `public`, `public-beta`, etc. per download; switching branches forces a clean re-download to avoid delta corruption.
+- **Mobile UX** — sensor-based landscape rotation, layout reflow across fold/unfold, split-screen, portrait-aspect windows, and 21:9 displays, rewritten touch scrolling with fling, back-button guard, and virtual-keyboard-aware panels.
+- **Diagnostics without adb** — persistent Debug toggle captures logcat to `StS2LauncherMM/Logs/` (auto-rotated) so users can attach logs to issues.
 
-   **Trade-off (degraded mode — must be communicated to users):**
+### Mod-compatibility shims
 
-   | Capability | Status with shim |
-   |------------|------------------|
-   | BaseLib DLL/PCK load + 153 Harmony patches install | ✅ |
-   | Node factories (`Control`, `NCreatureVisuals`, `NRestSiteCharacter`, etc.) | ✅ |
-   | Content / encounter / event patches (`DeprecatedAct`, `Glory`, `Hive`, `Overgrowth`, `Underdocks` ...) | ✅ |
-   | Config UI / `SimpleModConfig` | ✅ |
-   | `KeyGenerator` (enum extension, e.g. `CardKeyword`) | ✅ |
-   | `CustomPile` patch | ✅ |
-   | **Async hook system** (`AfterCardPlayed`, `BeforePlay`, etc.) | ❌ no-op (callbacks never fire) |
-   | Mods adding cards / characters / content via BaseLib's non-hook APIs | ✅ usually works |
-   | Mods that depend on BaseLib hooks for runtime triggers (e.g. "on card play do X") | partial — mod loads but trigger never fires |
+- **BaseLib** — v3.x used to hard-crash the game on Android with a black screen (issues #8/#32/#55). Current builds load and run BaseLib and its dependents, with one remaining trade-off: BaseLib's **async hook system** (`AfterCardPlayed` etc.) is intentionally no-op'd on mobile because its state-machine IL surgery corrupts memory on Mono Android. Mods that add content through BaseLib's non-hook APIs work normally; mods that rely on async hooks load but those triggers never fire.
+- **`release_info.json` on Android (issue #9)** — fixes the `????` main-menu build label and LAN version-mismatch handshake failures.
+- **LAN multiplayer fixes** — 4-player sessions (issue #18), persistent client netId (issue #26), and cloud "zombie run" cleanup (issue #31).
 
-   This is an explicit workaround, not a real fix. Real fix paths require either (a) identifying the underlying MonoMod / Cecil / Mono Android emit bug and patching it upstream, (b) BaseLib shipping a mobile-aware variant that doesn't rely on the failing emit pattern, or (c) replacing the bundled Ekyso `0Harmony.dll` build.
+### Separate app identity
 
-2. **`release_info.json` loaded on Android (issue #9).** The main-menu build label used to show `????` and the launcher reported `NON_RELEASE` to the LAN multiplayer handshake (causing version-mismatch errors against PC clients) because `ReleaseInfoManager.LoadConfig` looked at the executable directory which is empty on Android. New `ReleaseInfoPatches` postfix loads `release_info.json` from the game payload directory (`<files>/game/`) instead. Build label and LAN handshake now show the correct game version.
-
-### Known incompatibilities (cannot be fixed launcher-side)
-
-- **QuickReload (mmmmie)** and any other mod that imports `Steamworks.NET` directly — will crash on PLAY with a black screen on the mobile launcher. These mods call into `libsteam_api.so` (the Steamworks SDK native library) which Valve does not ship for Android. The launcher provides a no-op stub `libsteam_api.so` to satisfy the dynamic linker but actual API calls (`SteamUser.GetSteamID`, lobby APIs, Steam Cloud API, etc.) cannot work. The launcher's bundled SteamKit2 is a separate API surface (Steam network protocol for cloud / auth / depot manifests, not in-process Steam Client integration) and cannot substitute. Until each mod author ships a mobile-aware build that gates Steamworks calls, these mods are not usable on the launcher.
-
-  RitsuLib (OLC) used to be in this list but was decoupled from Steamworks upstream as of [v0.2.31](https://github.com/BAKAOLC/STS2-RitsuLib/releases/tag/v0.2.31) (issue #28, upstream [STS2-RitsuLib#38](https://github.com/BAKAOLC/STS2-RitsuLib/issues/38)). The mod and its dependents (ShowPlayerHandCards, MultiPlayerPotionView, etc.) now load and run on the mobile launcher. RitsuLib's own mod-data cloud-sync subfeature stays disabled on mobile, but it ships off by default and is opt-in, so most users are unaffected.
-
-## Fork changes (v0.3.2)
-
-Versioned as **0.3.2 (versionCode 233)**. Drop-in upgrade from 0.3.x — saves and credentials carry over. Targets issue #7 (Save Manager dialog blind to in-progress runs) which combined with several smaller defects produced a destructive cross-device loop where a quick swipe-to-quit could lose the most recently entered floor.
-
-### What's fixed
-
-1. **Save Manager dialog now surfaces the in-progress run.** The `현재 진행` row replaces the `캐릭터 N명` accumulator and reads as `1막 3층` (or `—` when no run is active). For users hopping between PC and mobile mid-run this is the only signal the dialog gives that one side has progress the other doesn't — pre-fix the dialog showed identical accumulator stats with only mtime/size differing, so users couldn't tell which `Keep` button was the safe choice.
-2. **Conflict detection looks at `current_run.save`, not just `progress.save`.** `CloudSyncDecisions.DetermineAsync` now flags a conflict when current-run files differ even if accumulator files match. Before this, the most common cross-device case (one device has an in-progress run, the other has none/older) silently classified as `Identical` and the user was never prompted to sync.
-3. **Card shows which profile it represents.** A small "프로필 N" subtitle under the card title — the picked summary may now be from profile2 or profile3 rather than always profile1, depending on which profile triggered the conflict. Also `(N개 프로필)` in the body when more than one profile differs.
-4. **`최근` badge uses both progress + current_run mtime.** Pre-fix the badge compared `progress.save` mtime alone, which mispointed at cloud whenever the in-progress run was the newer signal but progress.save hadn't been touched (verified: a strict swipe scenario where local current_run was newer than cloud, but cloud progress.save had a fresher mtime from a prior KeepLocal — old code said cloud, true newer = local).
-5. **Conflict resolution covers `current_run.save` too, and aligns mtimes.** `ApplyChosenSideAsync` previously processed only `progress.save` and skipped the `SetLastModifiedTime` step. After a `Keep*` press the in-progress run was left out of sync (next AutoSync's "cloud wins" fallback could then overwrite a local newer copy on identical floor counts) and mtimes drifted apart, re-triggering the same conflict on every relaunch. Now it pushes/pulls all of `progress.save / current_run.save / current_run_mp.save × profile 1/2/3 × {vanilla, modded}` and stamps local mtime to match cloud (KeepCloud) or NOW (KeepLocal) so the next decision sees consistent state.
-6. **`SaveProgressComparer.CompareCurrentRun` size tiebreaker.** Floor counts often match on both sides even when the run files differ by hundreds of bytes (post-floor-entry actions update `current_run.save` without touching `map_point_history` length). The old `Equal → cloud wins` fallback then silently destroyed local progress on the next sync. New tiebreaker: same floor → larger file wins. Combined with #5 this auto-recovers the "swipe before queue drained" case without user input.
-7. **PLAY locks while a cloud op is in flight.** `SetSyncBusy` now disables PLAY along with Push/Pull. Pre-fix you could tap Save Manager and then PLAY before the dialog resolved — the cloud handshake would then race the game's startup. (Android lifecycle still doesn't guarantee `Flush(5000)` finishes before swipe kills the process; the size-tiebreaker auto-recovery in #6 is the real safety net for that case.)
-
-### Diagnostics scaffolding (gated, opt-in)
-
-`Issue7Diagnostics` is included but a no-op unless the marker file `/storage/emulated/0/StS2LauncherMM/.diagnose_issue7` exists. When present it dumps per-profile audit state, AutoSync outcomes, IsCorrupt branch entries (with first-bytes hex), and CloudWriteQueue depth — useful if a future regression in this area needs to be reproduced and mailed in. Marker is created with `adb shell touch /storage/emulated/0/StS2LauncherMM/.diagnose_issue7`.
-
-## Fork changes (v0.3.1)
-
-Versioned as **0.3.1 (versionCode 228)**. Drop-in upgrade from 0.3.0.
-
-1. **Save Manager dialog fits short viewports.** On the Fold's folded (cover) screen the conflict dialog overflowed below the keyboard area, hiding the choice buttons. The dialog now scales every layout dimension by a continuous viewport-Y density factor (clamped to 0.55 at ≤900 px, 1.0 at ≥1700 px) with hard readability floors on font sizes — buttons stay reachable on all foldable display modes.
-
-## Fork changes (v0.3.0)
-
-Versioned as **0.3.0 (versionCode 227)**. **This is a breaking release** — the Android package id changes from `com.game.sts2launcher` to `com.game.sts2launcher.modmanager`, and the external storage root moves from `/storage/emulated/0/StS2Launcher/` to `/storage/emulated/0/StS2LauncherMM/`. Existing 0.2.x users have to:
-
-- Reinstall (the new package is a separate app — old data is not migrated automatically).
-- Move mods from the old path: file manager → `StS2Launcher/Mods/<ModId>/` → copy contents to `StS2LauncherMM/Mods/<ModId>/`.
-- Re-login to Steam and redownload the ~3 GB game payload (the old package's private data is sandboxed).
-
-The old package can stay installed alongside or be uninstalled at the user's discretion.
-
-### What's fixed / added
-
-1. **Cloud-save destruction fix (issue #4).** The launcher used to silently overwrite real Steam Cloud progress with fresh-default save files when the EnumerateUserFiles cache failed to load before `SaveManager.InitSettingsData()` ran. Symptoms: open the launcher, press PLAY, see "no save" main menu, and your PC progress is gone too once Steam syncs the destruction back. The fix:
-   - `CloudFileCache.WaitForLoadAsync()` — synchronous-blocking cache preload before any sync decision is made.
-   - `LauncherPatches.ConstructDefaultPrefix()` — first `SaveManager.Instance` access (during `NGame._Ready`) now blocks up to 15s on the cache load and falls back to a local-only `SaveManager` if it can't be obtained, so writes never reach the cloud-wrapped store with the cache in an unknown state.
-   - `CloudWriteQueue.Flush()` — now waits for the in-flight upload action, not just the queue depth (the original implementation returned the moment the queue dequeued, before the actual cloud RPC finished).
-   - `CCloud_ClientBeginFileUpload_Request.platforms_to_sync = uint.MaxValue` — was being left at 0, which made Steam Cloud treat mobile uploads as "no-platform" and surface a sync conflict on PC even between matching beta-branch installs.
-2. **Save Manager dialog.** A new explicit conflict-resolution UI replaces the silent timestamp-based resolver. On every PLAY, if local and cloud differ, a modal shows two side-by-side summary cards (W/L per character, max ascension, file size, file timestamp) and the user explicitly picks "Keep Local" / "Keep Cloud" / "Cancel". The same dialog is reachable from the **SAVE MANAGER** button on the launcher home — pressing it any time shows current sync state and offers an explicit re-sync.
-3. **Repurposed MOD MANAGER button → SAVE MANAGER.** The mod manager UI is still WIP; the button now opens the save sync dialog. The mod manager screen code is preserved (commented out at the controller call site) for when the flow is finished.
-4. **Package id renamed (issue #3).** `com.game.sts2launcher` → `com.game.sts2launcher.modmanager`. Stops the fork from sharing app data, external storage, ownership marker, and SharedPreferences with Ekyso's upstream APK. Side effect: the namespace and external-storage path also change.
-5. **External storage root renamed.** `/storage/emulated/0/StS2Launcher/` → `/storage/emulated/0/StS2LauncherMM/`. Same rationale — no overlap with upstream. The `Mods` and `Saves` subfolders are auto-created at launcher start once "All Files Access" is granted.
-6. **App label.** Home-screen / app-drawer label is now **"StS2 Launcher Mod"** so users running both forks can tell them apart.
-7. **In-game Quit waits for cloud upload completion (was hard 5s timeout).** The flush now exits the moment `CloudWriteQueue` signals "no work in flight" rather than waiting a fixed window. Healthy uploads finish in 1-5 s, cellular ones in 10-15 s; the 5-minute ceiling only kicks in if Steam itself is unreachable, in which case waiting longer wouldn't help. Background-mode (swipe-to-recents) flush stays at 5 s — Android can force-kill us before a longer wait completes.
-   - **Note for users:** during this Quit flush window the launcher process and its network connection stay alive in the background to finish the upload. If you watch the in-app log or system network indicators you'll see Steam traffic for those few seconds — that's the cloud sync completing, not a leak.
-
-### Save sync — important caveats
-
-- **Keep PC and mobile on the same Steam branch.** Mobile beta uploads to cloud are not readable by a PC client running Public, and vice versa. Steam shows a generic "sync conflict" with no auto-recovery; the only fix is to bring the PC branch in line with mobile's, run the game once, and then sync.
-- **If a destructive sync did happen on a 0.2.x device**, the recovery path is documented at [shrederr/sts2-progress-rebuild](https://github.com/shrederr/sts2-progress-rebuild). Drop the tool's exe into `%AppData%\SlayTheSpire2\steam\` and run it with Steam closed; it rebuilds `progress.save` from the per-run `.run` history and pushes the rebuild into Steam's cloud cache + bumps `remotecache.vdf` so cloud sync picks it up on the next Steam launch.
-
-## Fork changes (v0.2.2)
-
-Versioned as **0.2.2 (versionCode 212)**. Installs cleanly over the official 0.2.0 / our 0.2.1 with `adb install -r` — the 3GB game payload, saves, and credentials are preserved as long as the APK keystore signature matches.
-
-1. **Steam branch picker.** Tapping `CHECK FOR UPDATES` (or `DOWNLOAD GAME FILES` on a fresh install) now lists every public Steam branch — `public`, `public-beta`, etc. — pulled from `PICSGetProductInfo`. Pick a branch and the launcher checks/downloads against it. Selection is persisted to `OS.GetDataDir()/selected_branch`. Password-gated betas are listed but greyed out (slated for a later release).
-2. **Branch-switch forces a fresh download.** Switching branches wipes `game/` + `download_state/` and pulls every file from scratch. The delta path occasionally produced byte-correct-by-SHA but visually broken installs (e.g. card art mismatched against the wrong slot) when crossing `public ↔ public-beta`; full redownload (~3GB) sidesteps that until the underlying delta gap is identified. Login, saves, and the ownership marker are kept.
-3. **Mod-screen suppression on `public-beta`.** The MegaCrit beta build auto-opens an in-game `NSendFeedbackScreen` whose category dropdown throws `NullReferenceException` from `LocString.GetFormattedText` (missing localization rows in beta), leaving a stuck "Sending" overlay. We reflect over `MegaCrit.Sts2.Core.Nodes.Screens.FeedbackScreen.*` and force `_Ready` to skip with `Visible=false`, sidestepping the broken UI without disposing the node (which would crash `ScreenContext` polling on `NMainMenu`).
-4. **Storage-permission prompt up front.** `All Files Access` is requested once on first launch via a confirmation dialog. Mods, save backup, and any future external-storage features depend on it; previously the request was buried inside the Mod Manager flow that the user might never reach.
-5. **Branch picker hit-target.** The radio rows in the picker are wrapped in a flat `Button` so tapping anywhere on the row toggles the radio, with the `CheckBox` icon enlarged to ~28dp (issue #2).
-
-## Fork changes (v0.2.1)
-
-Versioned as **0.2.1 (versionCode 201)**.
-
-1. **Mods load on current game versions.** The upstream reflection-based `ModLoaderPatches` (scanning after `ModManager.Initialize`) crashed with `NullReferenceException` on current game builds because the private field names it touched were renamed. This fork replaces the approach with a Harmony IL transpiler that rewrites `Path.Combine(..., "mods")` inside `ModManager.Initialize` itself, so the game's own recursive scanner walks `/storage/emulated/0/StS2Launcher/Mods/`. The Steam-only mod enumerator (`ReadSteamMods`) is also short-circuited because Android has no Steamworks runtime.
-2. **Foldable UX.** `android:resizeableActivity="true"` so folding/unfolding triggers a smooth resize instead of Samsung's "Reopen app" prompt (see issue #1).
-3. **Back-button guard.** A stray back swipe no longer instantly restarts the launcher and drops your in-progress run — the first press shows a "Press back again to exit" toast, and only a second press within 2 seconds propagates.
-
-## Installing mods
-
-> **Heads up**: the "MOD MANAGER" button on 0.2.x has been repurposed to **"SAVE MANAGER"** in 0.3.0 (it opens the cloud sync dialog). The in-launcher SAF mod-import flow is still WIP, so use the manual file-manager method below until it lands.
-
-1. Grant the launcher "All files access" on first run when it prompts. Once granted, the launcher creates `/storage/emulated/0/StS2LauncherMM/Mods/` on its own.
-2. Install any Android file manager that can browse internal storage — Material Files, Solid Explorer, FE File Explorer, Samsung's built-in **내 파일**, etc.
-3. Navigate to `/storage/emulated/0/StS2LauncherMM/Mods/` and drop each mod as its own subfolder. A valid mod folder contains the mod's `.dll`, optional `.pck`, and a `<ModId>.json` manifest at its root — the same layout PC users paste into `Steam\steamapps\common\Slay the Spire 2\mods\`.
-
-   ![Mods folder layout](docs/images/mods_folder.jpg)
-
-4. Launch the game and tap PLAY. When the game's built-in "Load mods?" dialog appears, tap **OK** — the game will save the choice, restart through the launcher once, and come back up with mods loaded.
-
-If no mods appear, check `adb logcat | grep "\[Mods\]"` — successful scans log `Redirected ModManager.Initialize to /storage/emulated/0/StS2LauncherMM/Mods`.
+Package id is `com.game.sts2launcher.modmanager` and external storage lives under `/storage/emulated/0/StS2LauncherMM/` — the fork installs alongside the upstream APK without sharing data, and the app label is **"StS2 Launcher Mod"**.
 
 ## Features
 
-- **Steam authentication**  
-  Login via SteamKit2 with Steam Guard 2FA support.
-- **Game file download**  
-  Depot download directly from Steam, with update checking.
-- **Cloud saves**  
-  Full Steam cloud sync via SteamKit2's CCloud API, with timestamp-aware conflict resolution and non-blocking background uploads.
-- **Local backup**  
-  Full-tree save snapshots to external storage, preserving the original folder layout and filenames (no `.bak` renaming). The **Local Backup** button takes a manual snapshot on demand (`Saves/manual/<ts>/`); the pre-PLAY cloud handshake auto-snapshots once per launch (`Saves/auto/<ts>_match/`, or `Saves/auto/<ts>_conflict/{kept,discarded}/` so a wrong KeepLocal/KeepCloud choice is recoverable). Manual sets are kept indefinitely; auto sets are FIFO-capped at the newest 10.
-- **Mobile adaptation**  
-  Touch input, UI scaling, layout adjustments, and app lifecycle handling via Harmony runtime patches.
-- **LAN multiplayer**  
-  UDP broadcast discovery and manual IP join.
-- **Shader warmup**  
-  Vulkan pipeline cache persistence and canvas ubershader support to eliminate first-encounter stutters.
-- **Credential security**  
-  Steam refresh tokens encrypted at rest via Android Keystore (AES-256-GCM, hardware-backed TEE).
+- **Steam authentication** — SteamKit2 login with Steam Guard 2FA; refresh tokens encrypted at rest via Android Keystore (AES-256-GCM, hardware-backed TEE).
+- **Game download** — Steam depot download with update checking and branch selection.
+- **Steam Workshop** — in-app browse, subscribe, auto-download/update, and mod enable/disable.
+- **Cloud saves** — full Steam Cloud sync via SteamKit2's CCloud API with an explicit conflict-resolution UI and destructive-write guards.
+- **Local backup** — manual and automatic full-tree save snapshots to external storage.
+- **Launcher self-update** — in-app update check and APK install flow.
+- **Mobile adaptation** — touch input, UI scaling, foldable/rotation layout handling, and app lifecycle handling via Harmony runtime patches.
+- **LAN multiplayer** — UDP broadcast discovery and manual IP join (see [LAN Multiplayer](#lan-multiplayer)).
+- **Shader warmup** — Vulkan pipeline cache persistence and canvas ubershaders to eliminate first-encounter stutters.
 
-## How It Works
+## Installing mods
+
+**Workshop (recommended)** — tap **MOD MANAGER** on the launch screen, browse or search the WORKSHOP tab, and subscribe. Download, installation, and updates are automatic. See the [사용설명서](docs/USER_GUIDE.md) for details.
+
+**Manual install** — for mods not on the Workshop, drop each mod as its own subfolder under `/storage/emulated/0/StS2LauncherMM/Mods/` using any file manager. A valid mod folder contains the mod's `.dll`, optional `.pck`, and a `<ModId>.json` manifest at its root — the same layout PC users put in `Steam\steamapps\common\Slay the Spire 2\mods\`.
+
+![Mods folder layout](docs/images/mods_folder.jpg)
+
+Launch the game and tap PLAY; accept the game's built-in "Load mods?" dialog and the game restarts once through the launcher with mods loaded. If mods don't appear, turn on the Debug toggle and check the log for `[Mods]` lines.
+
+### Known incompatibilities
+
+Mods that import **Steamworks.NET** directly (e.g. QuickReload) crash on PLAY — Valve does not ship the Steamworks SDK native library for Android, and the launcher's stub `libsteam_api.so` only satisfies the linker. Several Steamworks API surfaces (SteamID, auth tickets, achievements/stats, cloud, UGC, leaderboards) can in principle be bridged through SteamKit2 and may be shimmed per-mod — file an issue if a specific mod needs one. Genuinely unbridgeable: SteamNetworkingSockets P2P, the Steam overlay, and SteamInput.
+
+## Release history
+
+Per-version changelogs (in Korean, with technical notes) are on the [Releases page](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases). Fork-change details for 0.2.x–0.3.11 that used to live in this README are preserved in the [git history](https://github.com/iunius612/StS2-Launcher_Mod_Manager/blob/v0.3.23/README.md).
+
+## Development
+
+### How it works
 
 At startup, `STS2Mobile.dll` is loaded via `coreclr_create_delegate` and applies [Harmony](https://github.com/pardeike/Harmony) patches to adapt the desktop game for mobile. The launcher intercepts `GameStartupWrapper()` to present a Steam login screen before the game starts.
 
-- **Launcher-only mode**  
-If no game files are present, the app loads a minimal `bootstrap.pck` and shows the launcher UI for Steam login and game download.  
-- **Normal mode**  
-With game files downloaded, all patches apply against `sts2.dll` and the game runs natively after authentication.
+- **Launcher-only mode** — with no game files present, a minimal `bootstrap.pck` provides the launcher UI for Steam login and game download.
+- **Normal mode** — with game files downloaded, all patches apply against `sts2.dll` and the game runs natively after authentication.
 
-## Engine Patches
+### Engine patches
 
 Custom patches to the Godot 4.5.1 engine source for Android-specific issues:
 
-- **Vulkan pipeline cache persistence**  
-Saves compiled pipelines when the app loses focus, preventing recompilation after Android kills the process.
-- **Canvas ubershaders**  
-Enable ubershader fallback for 2D rendering, eliminating first-encounter VFX stutters from blocking pipeline compilation.
+- **Vulkan pipeline cache persistence** — saves compiled pipelines when the app loses focus, preventing recompilation after Android kills the process.
+- **Canvas ubershaders** — ubershader fallback for 2D rendering, eliminating first-encounter VFX stutters from blocking pipeline compilation.
 
-## Project Structure
+### Project structure
 
 ```
 src/STS2Mobile/
   ModEntry.cs              # Entry point ([UnmanagedCallersOnly] Apply())
   PatchHelper.cs           # Shared patch utility + logging
   Patches/                 # Harmony patches (one file per concern)
-  Launcher/                # Programmatic Godot UI (MVC)
-  Steam/                   # SteamKit2 login, depot download, cloud saves
+  Launcher/                # Programmatic Godot UI (MVC) incl. Mod Hub / Workshop
+  Steam/                   # SteamKit2 login, depot download, cloud saves, Workshop
+src/stubs/                 # Native library stubs (Steam API, Sentry)
 android/                   # Godot Android gradle project
   src/.../GodotApp.java    # Activity, assembly setup, Keystore encryption
   assets/bootstrap.pck     # Minimal PCK for launcher-only mode
-src/stubs/                 # Native library stubs (Steam API, Sentry)
+tools/memberref-audit/     # Static IL audit of patches vs. a new game build
 scripts/                   # Build and tooling scripts
+docs/                      # User guide (Korean) + images
 ```
 
-## Prerequisites
+### Prerequisites
 
 - .NET 9 SDK
 - Android SDK + NDK (see `android/config.gradle` for versions)
@@ -231,35 +135,25 @@ scripts/                   # Build and tooling scripts
 - Custom Godot engine build (see `scripts/build-godot.sh`)
 - FMOD SDK in `vendor/fmod-sdk/`
 
-## Building
+### Building
 
-**Note: This is a WIP. There are other binaries that are required and will fail if you just run the `./build.sh` script. Godot Engine can be found on their repo https://github.com/godotengine/godot. Harmony can be found here https://github.com/Ekyso/Harmony but the version used in StS2 Launcher is compiled using dotnet 9.0. FMOD can be found here https://www.fmod.com/. Spine can be found here https://esotericsoftware.com/. I plan to upload the custom fork of Godot Engine used and the dotnet 9.0 Harmony soon. However, Spine and FMOD will not be uploaded due to licensing restrictions. Information on licensing can be found in the [THIRD-PARTY-NOTICES.txt](https://github.com/Ekyso/StS2-Launcher/blob/main/THIRD_PARTY_LICENSES.md) of the root folder.** 
+> **Note**: the build requires binaries that are not in this repository. The custom Godot engine is based on [godotengine/godot](https://github.com/godotengine/godot) and Harmony on [Ekyso/Harmony](https://github.com/Ekyso/Harmony) (compiled for .NET 9) — see the upstream project for engine details. FMOD and Spine cannot be redistributed for licensing reasons; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ```bash
 bash scripts/build.sh
 ```
 
-This runs the full pipeline:
-1. `dotnet publish` the patcher (outputs `STS2Mobile.dll` + SteamKit2 dependencies)
-2. Copies published DLLs to `android/assets/dotnet_bcl/`
-3. Copies `libSystem.Security.Cryptography.Native.Android.so` to JNI libs (for TLS)
-4. Bumps the version in `gradle.properties`
-5. Builds the APK via `./gradlew assembleMonoRelease`
+This runs the full pipeline: `dotnet publish` the patcher → copy published DLLs to `android/assets/dotnet_bcl/` → copy the Android crypto native lib to JNI libs → bump the version in `gradle.properties` → build the APK via `./gradlew assembleMonoRelease`.
 
 Output: `android/build/outputs/apk/mono/release/StS2Launcher-v<version>.apk`
 
-### Installing
-
 ```bash
+# Install to a device
 adb install -r android/build/outputs/apk/mono/release/StS2Launcher-v*.apk
 
 # Fresh install (clear saved credentials + cached assemblies)
 adb shell pm clear com.game.sts2launcher.modmanager
-```
 
-### Other build tasks
-
-```bash
 # Regenerate bootstrap PCK (only if project.godot changes)
 python3 scripts/make-bootstrap-pck.py
 
@@ -270,24 +164,21 @@ bash scripts/build-godot.sh
 bash src/stubs/build_stubs.sh
 ```
 
-## LAN Multiplayer
-
-Both devices must be on the same local network. The mobile app discovers nearby games via UDP broadcast, or you can enter the PC's IP address manually.
-
-On the PC, add `--fastmp` to the Steam launch options:
-**Steam > Slay the Spire 2 > Properties > Launch Options** and enter `--fastmp`
-
-This enables the fast multiplayer mode that the mobile client expects.
-
-## Technical Notes
+### Technical notes
 
 - Native library stubs (`src/stubs/`) provide no-op `.so` files for desktop-only libraries (Steamworks SDK, Sentry) so the linker is satisfied at runtime.
 - The bootstrap PCK is a minimal `project.godot` wrapper that enables .NET module initialization without game files.
 - The game's Sentry plugin has no `android.arm64` build, so it's disabled via PCK patching and Harmony patches.
 - GodotSharp interop is manually bootstrapped in `ModEntry.cs` since the Godot SDK source generators aren't available.
 
+## LAN Multiplayer
+
+Both devices must be on the same local network. The mobile app discovers nearby games via UDP broadcast, or you can enter the PC's IP address manually.
+
+On the PC, add `--fastmp` to the Steam launch options: **Steam > Slay the Spire 2 > Properties > Launch Options** → `--fastmp`. This enables the fast multiplayer mode the mobile client expects.
+
+Keep PC and mobile on the **same Steam branch** — cloud saves uploaded from one branch are not readable by a client on another, and Steam shows a generic sync conflict with no auto-recovery.
+
 ## License
 
-This project is licensed under the [MIT License](LICENSE). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for third-party dependency licenses.
-
-FMOD requires a commercial license if your project generates revenue. Spine Runtimes require a valid Spine Editor license. See the third-party licenses file for details.
+This project is licensed under the [MIT License](LICENSE). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for third-party dependency licenses. FMOD requires a commercial license if your project generates revenue; Spine Runtimes require a valid Spine Editor license.
