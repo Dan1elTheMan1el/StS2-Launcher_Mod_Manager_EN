@@ -130,6 +130,13 @@ public static class ModPlatformSpoofPatches
             if (
                 name == "0Harmony"
                 || name.StartsWith("MonoMod", StringComparison.Ordinal)
+                // Harmony's replacement of the patched method itself sits on the
+                // stack as a MonoMod DMD ("DMDASM.<hash>" assembly, dynamic OR
+                // byte-loaded via the Cecil backend) — plumbing, not the caller.
+                // Missing this filter made the spike misattribute the caller to
+                // the trampoline and answer truth (device round 1).
+                || asm.IsDynamic
+                || name.StartsWith("DMDASM", StringComparison.Ordinal)
                 || name == "System.Private.CoreLib"
                 || name == "mscorlib"
                 || name == "netstandard"
