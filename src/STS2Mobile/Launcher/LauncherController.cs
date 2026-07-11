@@ -220,7 +220,33 @@ public class LauncherController
         switch (result)
         {
             case FastPathResult.ReadyToLaunch:
-                _view.SetStatus($"Welcome back, {_model.AccountName}");
+                // issue #59 — warn only, never block. This fast path exists
+                // specifically so offline/no-network play keeps working, so
+                // an expired saved token must NOT stop PLAY (ShowLaunchStage
+                // below always runs). A definitely-expired token additionally
+                // reveals the already-built, already-wired Login section
+                // (LauncherView.cs: Login/Actions are VBox siblings, and
+                // Login.LoginRequested is subscribed unconditionally in this
+                // controller's constructor) so re-login is one tap away
+                // without leaving this screen — no new dialog/component.
+                if (_model.SavedTokenExpired)
+                {
+                    _view.SetStatus(
+                        "Steam 로그인이 만료되었습니다. 클라우드 동기화·창작마당을 쓰려면 아래에서 다시 로그인하세요. (오프라인 플레이는 계속 가능합니다)"
+                    );
+                    _view.Login.Visible = true;
+                    _view.Login.SetDisabled(false);
+                }
+                else if (_model.SavedTokenExpiringSoon)
+                {
+                    _view.SetStatus(
+                        $"Welcome back, {_model.AccountName} (Steam 로그인 곧 만료 — 재로그인 권장)"
+                    );
+                }
+                else
+                {
+                    _view.SetStatus($"Welcome back, {_model.AccountName}");
+                }
                 var text = ResolveLaunchButtonText();
                 ShowLaunchStage(text, showCloudSync: true, showUpdate: true);
                 break;

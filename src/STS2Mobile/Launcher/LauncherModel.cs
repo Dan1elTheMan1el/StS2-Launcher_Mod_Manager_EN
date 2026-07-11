@@ -57,6 +57,16 @@ public class LauncherModel : IDisposable
     public string FailReason => _failReason;
     public SessionState SessionState => _state;
 
+    // issue #59 — computed once per StartSession() call from the saved
+    // refresh token's JWT `exp` claim, no network involved. Deliberately does
+    // NOT block/redirect the fast path (see StartSession) — these are pure
+    // signals for the controller to decide how to warn the user while still
+    // letting ReadyToLaunch/PLAY proceed uninterrupted (offline play must
+    // keep working even with an expired token — that's the whole point of
+    // the fast path).
+    public bool SavedTokenExpired { get; private set; }
+    public bool SavedTokenExpiringSoon { get; private set; }
+
     // Issue #58 phase 4b: exposes the launcher's own SteamConnection so the Mod
     // Hub's Workshop tabs can issue PublishedFile RPCs without opening a second
     // connection. Null until EnsureConnectedAsync (or Connect/LoginAsync) has run
@@ -100,6 +110,25 @@ public class LauncherModel : IDisposable
             LauncherPatches.SavedRefreshToken = _credentialStore.RefreshToken;
         }
 
+        // issue #59 — pre-flight exp check, no network. Deliberately does NOT
+        // change any of the FastPathResult branching below — ReadyToLaunch/
+        // AutoConnect/ShowLogin are decided exactly as before. Unparseable
+        // token (format change, corrupt data) leaves both flags false, same
+        // as today (fail-open — see RefreshTokenExpiry's class doc).
+        SavedTokenExpired = false;
+        SavedTokenExpiringSoon = false;
+        if (_credentialStore.HasCredentials)
+        {
+            SavedTokenExpired = RefreshTokenExpiry.IsExpired(_credentialStore.RefreshToken);
+            SavedTokenExpiringSoon =
+                !SavedTokenExpired
+                && RefreshTokenExpiry.IsExpiringSoon(_credentialStore.RefreshToken, withinDays: 14);
+            if (SavedTokenExpired)
+                PatchHelper.Log("[Issue59] Saved refresh token appears expired (exp in the past)");
+            else if (SavedTokenExpiringSoon)
+                PatchHelper.Log("[Issue59] Saved refresh token expiring within 14 days");
+        }
+
         var verifier = CreateOwnershipVerifier();
         var hasMarker = verifier?.HasMarker() ?? false;
         PatchHelper.Log(
@@ -130,6 +159,7 @@ public class LauncherModel : IDisposable
                 _credentialStore.RefreshToken
             );
             await VerifyOwnershipAsync();
+            _ = MaybeRenewRefreshTokenAsync();
         }
         catch (Exception ex)
         {
@@ -181,6 +211,7 @@ public class LauncherModel : IDisposable
 
             _connection = new SteamConnection(result.AccountName, result.RefreshToken);
             await VerifyOwnershipAsync();
+            _ = MaybeRenewRefreshTokenAsync();
         }
         catch (Exception ex)
         {
@@ -189,6 +220,49 @@ public class LauncherModel : IDisposable
             _auth?.Dispose();
             _auth = null;
         }
+    }
+
+    // issue #59 — opportunistic rolling refresh-token renewal, fired
+    // fire-and-forget (`_ = ...`) right after a connection has successfully
+    // logged on (Connect()/LoginAsync()), so it can never delay or affect
+    // the outcome of the login/connect flow itself — "기존 성공 경로는 손대지
+    // 않는다". Deliberately NOT wired into EnsureConnectedAsync (download/
+    // update-check path): once per app-session connect is enough: repeating
+    // this on every download/update check would be redundant RPC traffic for
+    // no added benefit (a renewal that already landed this session makes the
+    // next IsExpiringSoon check false anyway).
+    //
+    // Only fires the actual RPC when the CURRENT saved token is within the
+    // renewal window — cheap no-op the overwhelming majority of the time.
+    // SteamCredentialStore.Save already fails safe internally (catches its
+    // own exceptions, logs, never throws) — a persistence failure here still
+    // leaves the freshly-renewed token live in LauncherPatches.SavedRefreshToken
+    // for the rest of THIS session, it just won't survive an app restart.
+    private async Task MaybeRenewRefreshTokenAsync()
+    {
+        // 45 days, deliberately wider than the 14-day boot warning: renewal
+        // only fires while a session is actually connected, so the window has
+        // to cover realistic boot gaps — with a 14-day window anyone who
+        // plays less often than fortnightly can jump straight from "not soon"
+        // to "expired" without ever getting a renewal chance. 45 keeps the
+        // "only renew a near-death token" safety property (a botched
+        // persist/renewal can only cost a token that was dying anyway) while
+        // covering monthly players.
+        if (!RefreshTokenExpiry.IsExpiringSoon(_credentialStore.RefreshToken, withinDays: 45))
+            return;
+
+        if (_connection == null)
+            return;
+
+        var newToken = await _connection
+            .TryRenewRefreshTokenAsync(_credentialStore.RefreshToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrEmpty(newToken))
+            return;
+
+        _credentialStore.Save(_credentialStore.AccountName, newToken, _credentialStore.GuardData);
+        LauncherPatches.SavedRefreshToken = newToken;
+        PatchHelper.Log("[Issue59] Refresh token renewed and persisted");
     }
 
     public void SubmitCode(string code) => _codeTcs?.TrySetResult(code);
