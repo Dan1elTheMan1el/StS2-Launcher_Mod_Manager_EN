@@ -29,6 +29,13 @@ public static class LauncherPatches
     // SaveManager (no cloud writes possible) when false.
     private static bool _cloudCacheReady;
 
+    // Issue #64 — lets ProfileCopyFlow apply the same "cloud-reflect verify
+    // failed -> local-only for the rest of this session" degradation
+    // HandleConflictAsync/HandleProfileConflictAsync already apply on their own
+    // KeepLocal/KeepCloud verify failures (see :504,:515,:614 below), without
+    // duplicating the _cloudCacheReady field in a different class.
+    internal static void DegradeToLocalOnlySession() => _cloudCacheReady = false;
+
     public static void Apply(Harmony harmony)
     {
         PatchHelper.PatchCritical(
@@ -296,14 +303,22 @@ public static class LauncherPatches
     // on its own — see CloudSyncDecisions.DeterminePerProfileAsync.
     public static async Task OpenSaveSyncDialogAsync(Node parent)
     {
+        // Issue #64 (D7) — localStore is a pure local-filesystem handle (no
+        // network I/O), so it's safe to build before knowing whether cloud sync
+        // is even usable this session. Every branch below needs it, including
+        // the local-only menu.
+        var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
+
         if (!CloudSyncEnabled)
         {
-            PatchHelper.Log("[Cloud] Save Manager: cloud sync disabled by user");
+            PatchHelper.Log("[Cloud] Save Manager: cloud sync disabled by user — local-only menu");
+            await RunLocalOnlyMenuAsync(parent, localStore);
             return;
         }
         if (SavedAccountName == null || SavedRefreshToken == null)
         {
-            PatchHelper.Log("[Cloud] Save Manager: no saved credentials");
+            PatchHelper.Log("[Cloud] Save Manager: no saved credentials — local-only menu");
+            await RunLocalOnlyMenuAsync(parent, localStore);
             return;
         }
 
@@ -314,11 +329,10 @@ public static class LauncherPatches
         bool cacheLoaded = await cloudStore.WaitForCacheReadyAsync(15_000);
         if (!cacheLoaded)
         {
-            PatchHelper.Log("[Cloud] Save Manager: cloud cache failed to load");
+            PatchHelper.Log("[Cloud] Save Manager: cloud cache failed to load — local-only menu");
+            await RunLocalOnlyMenuAsync(parent, localStore);
             return;
         }
-
-        var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
 
         // Cached across loop iterations — DeterminePerProfileAsync downloads
         // every non-identical-size cloud progress.save to compare it, so
@@ -363,8 +377,39 @@ public static class LauncherPatches
             );
             parent.AddChild(picker);
             var picked = await picker.Result;
+            var requestedAction = picker.RequestedAction;
+
             if (picked == null)
-                return; // Closed without picking a slot.
+            {
+                // Issue #64 — the picker's closing button row can request the
+                // profile-copy or backup-restore flow instead of just closing.
+                // Both are orchestrated in ProfileCopyFlow.cs; the returned bool
+                // mirrors the `applied` contract below (forces a fresh
+                // DeterminePerProfileAsync only when state actually changed).
+                if (requestedAction == PickerAction.Copy)
+                {
+                    bool copyApplied = await ProfileCopyFlow.RunCopyAsync(
+                        parent,
+                        localStore,
+                        cloudStore
+                    );
+                    if (copyApplied)
+                        slots = null;
+                    continue;
+                }
+                if (requestedAction == PickerAction.Restore)
+                {
+                    bool restoreApplied = await ProfileCopyFlow.RunRestoreAsync(
+                        parent,
+                        localStore,
+                        cloudStore
+                    );
+                    if (restoreApplied)
+                        slots = null;
+                    continue;
+                }
+                return; // Closed without picking a slot or action.
+            }
 
             PatchHelper.Log(
                 $"[Cloud] Save Manager: slot picked profile={picked.ProfileNumber} modded={picked.IsModded} decision={picked.Decision}"
@@ -378,6 +423,38 @@ public static class LauncherPatches
             bool applied = await HandleProfileConflictAsync(parent, localStore, cloudStore, picked);
             if (applied)
                 slots = null; // State changed — force a fresh DeterminePerProfileAsync.
+        }
+    }
+
+    // Issue #64 (D7) — Save Manager entry when cloud sync is disabled,
+    // unauthenticated, or the cloud cache failed to load this session. Profile
+    // copy and backup restore are pure local filesystem operations, so both stay
+    // reachable — loops a small static menu (LocalOnlyMenuDialog) instead of the
+    // per-slot ProfilePickerDialog, since there's no cloud comparison to show.
+    // cloudStore is passed as null to ProfileCopyFlow, which skips its own
+    // "클라우드에도 반영할까요?" step entirely in that case (§3-2/3-3 step 7 bypass).
+    private static async Task RunLocalOnlyMenuAsync(Node parent, ISaveStore localStore)
+    {
+        while (true)
+        {
+            var menu = new LocalOnlyMenuDialog(
+                LauncherUI.ResolveScale(parent),
+                LauncherUI.ResolveViewportHeight(parent)
+            );
+            parent.AddChild(menu);
+            var action = await menu.Result;
+
+            switch (action)
+            {
+                case PickerAction.Copy:
+                    await ProfileCopyFlow.RunCopyAsync(parent, localStore, null);
+                    continue;
+                case PickerAction.Restore:
+                    await ProfileCopyFlow.RunRestoreAsync(parent, localStore, null);
+                    continue;
+                default:
+                    return; // Closed.
+            }
         }
     }
 
@@ -713,7 +790,10 @@ public static class LauncherPatches
     // FlushAndVerifyAsync, but checks the picked slot's own progress.save
     // instead of always profile1 — a KeepLocal/KeepCloud on profile2 shouldn't
     // report success/failure based on profile1's unrelated state.
-    private static async Task<bool> FlushAndVerifyForSlotAsync(
+    // Issue #64 — promoted private→internal so ProfileCopyFlow.RunCopyAsync can
+    // call it directly for the profile-copy destination slot's cloud-reflect
+    // step (body unchanged).
+    internal static async Task<bool> FlushAndVerifyForSlotAsync(
         ISaveStore localStore,
         SteamKit2CloudSaveStore cloudStore,
         bool keepLocal,
@@ -867,7 +947,10 @@ public static class LauncherPatches
     // history/*.run for that slot only — the data-safety guarantee is that
     // the other 5 slots are never even resolved to a path here, so a
     // KeepLocal/KeepCloud pick for profile2 physically cannot touch profile1.
-    private static async Task ApplyChosenSideForSlotAsync(
+    // Issue #64 — promoted private→internal so ProfileCopyFlow.RunCopyAsync can
+    // call it directly for the profile-copy destination slot's cloud-reflect
+    // step (body unchanged).
+    internal static async Task ApplyChosenSideForSlotAsync(
         ISaveStore local,
         SteamKit2CloudSaveStore cloud,
         bool keepLocal,

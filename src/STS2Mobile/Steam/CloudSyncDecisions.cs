@@ -367,6 +367,63 @@ public static class CloudSyncDecisions
         return results;
     }
 
+    // Issue #64 — Save Manager entry points that must work even when cloud
+    // sync is unavailable (disabled, no credentials, cache load failed; D7
+    // "bypass"): a local-only inventory of every (profile × modded) slot, no
+    // ICloudSaveStore touch at all. This is the local half of EvaluateSlotAsync
+    // pulled out on its own — reuses the same BuildSummary/GetSize helpers so
+    // the numbers match exactly what DeterminePerProfileAsync would show for
+    // the local side. Unlike DeterminePerProfileAsync, empty slots are
+    // INCLUDED (SaveProgressSummary.IsEmpty distinguishes them) — the profile-
+    // copy destination picker needs to list and label empty slots too.
+    public static Task<List<SaveProgressSummary>> SummarizeLocalSlotsAsync(ISaveStore local)
+    {
+        var results = new List<SaveProgressSummary>();
+        var wasModded = UserDataPathProvider.IsRunningModded;
+        try
+        {
+            for (int profile = 1; profile <= MaxProfiles; profile++)
+            {
+                foreach (bool modded in new[] { false, true })
+                {
+                    UserDataPathProvider.IsRunningModded = modded;
+
+                    var progressPath = SavePathCompat.GetProgressPathForProfile(profile);
+                    var runPath = SavePathCompat.GetRunSavePath(profile, "current_run.save");
+
+                    int progressSize = local.FileExists(progressPath)
+                        ? GetSize(local, progressPath)
+                        : 0;
+                    int runSize = local.FileExists(runPath) ? GetSize(local, runPath) : 0;
+
+                    var summary = BuildSummary(
+                        () => progressSize > 0 ? local.ReadFile(progressPath) : null,
+                        progressSize,
+                        progressSize > 0
+                            ? local.GetLastModifiedTime(progressPath)
+                            : DateTimeOffset.MinValue,
+                        () => runSize > 0 ? local.ReadFile(runPath) : null,
+                        runSize,
+                        runSize > 0 ? local.GetLastModifiedTime(runPath) : DateTimeOffset.MinValue,
+                        "local"
+                    );
+                    summary.ProfileNumber = profile;
+                    summary.IsModded = modded;
+                    results.Add(summary);
+                }
+            }
+        }
+        finally
+        {
+            UserDataPathProvider.IsRunningModded = wasModded;
+        }
+        // Purely local/synchronous — Task.FromResult keeps the signature
+        // consistent with DetermineAsync/DeterminePerProfileAsync (both
+        // genuinely async due to cloud reads) without an unnecessary state
+        // machine here.
+        return Task.FromResult(results);
+    }
+
     // P1-1 (A1) — CloudFileCache loads once lazily on first access and
     // (before this) was never refreshed again for the rest of the session.
     // A KeepCloud pull, a PC-side upload, or anything else that changes the
