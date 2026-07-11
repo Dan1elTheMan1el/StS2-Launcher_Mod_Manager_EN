@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 
@@ -31,6 +33,12 @@ public static class ModLoaderPatches
             "ReadSteamMods",
             prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(ReadSteamModsPrefix))
         );
+        PatchHelper.Patch(
+            harmony,
+            typeof(ModManager),
+            "ReadModManifest",
+            prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(ReadModManifestPrefix))
+        );
     }
 
     // Swap the fileIo argument the game just constructed for our redirecting
@@ -49,4 +57,24 @@ public static class ModLoaderPatches
 
     // Skip the Steam-backed mod enumeration on Android (no Steamworks runtime).
     public static bool ReadSteamModsPrefix() => false;
+
+    // The launcher's mod registry (mod_config.json, numeric "version" by design)
+    // lives at the root of the redirected mods dir, and the game's scanner tries
+    // every *.json in the tree as a mod manifest — logging a caught JsonException
+    // for the registry on every launch (issue #71). Skip it before the parse.
+    public static bool ReadModManifestPrefix(string filename, ref Mod __result)
+    {
+        if (
+            string.Equals(
+                Path.GetFileName(filename),
+                "mod_config.json",
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            __result = null;
+            return false;
+        }
+        return true;
+    }
 }
