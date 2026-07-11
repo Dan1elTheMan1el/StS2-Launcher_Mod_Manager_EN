@@ -322,22 +322,26 @@ public static class LauncherPatches
             return;
         }
 
-        // issue #59 — cloud-access gate, not an entry gate: the Save Manager's
-        // cloud mode is about to talk to Steam with a token we already know is
-        // dead, which would just burn the 15 s cache wait and silently bail.
-        // Tell the user what's actually wrong instead. (After the issue #64
-        // merge this branch point routes to the local-only menu so the local
-        // features — profile clone / backup restore — stay usable; the expired
-        // notice then only guards the cloud paths. See consolidation notes.)
+        // issue #59 + #64 통합 — cloud-access gate, not an entry gate: the
+        // Save Manager's cloud mode would talk to Steam with a token we
+        // already know is dead (burning the 15 s cache wait before silently
+        // bailing). Say what's actually wrong, then still hand over the
+        // local-only menu so the local features — profile clone / backup
+        // restore — stay usable (owner-confirmed semantics: local work keeps
+        // running, only the cloud request gets the notice).
         if (RefreshTokenExpiry.IsExpired(SavedRefreshToken))
         {
-            PatchHelper.Log("[Issue59] Save Manager: saved token expired — cloud mode blocked");
+            PatchHelper.Log(
+                "[Issue59] Save Manager: saved token expired — cloud mode blocked, local-only menu"
+            );
             await Launcher.Components.SimpleResultDialog.ShowAsync(
                 parent,
                 false,
-                "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.",
+                "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n"
+                    + "앱을 재실행한 뒤 다시 로그인해 주세요.\n(로컬 기능은 계속 사용할 수 있습니다)",
                 Launcher.LauncherUI.ResolveScale(parent)
             );
+            await RunLocalOnlyMenuAsync(parent, localStore);
             return;
         }
 
