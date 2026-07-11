@@ -223,6 +223,18 @@ public class LauncherUI : Control
             PatchHelper.Log($"[Launcher] OnExitTree tree cleanup failed: {ex.Message}");
         }
 
+        // Issue #38: the view's ctor hooked the root viewport's SizeChanged; the
+        // viewport outlives this node, so disconnect here or every fold/unfold
+        // during gameplay fires the handler against the disposed LauncherUI.
+        try
+        {
+            _view?.DetachViewportHook();
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] OnExitTree viewport hook detach failed: {ex.Message}");
+        }
+
         // Hand the Window's content scale back to whatever the game set so the
         // launcher exit doesn't break the game's own UI sizing.
         if (_windowScaleOverridden)

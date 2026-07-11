@@ -26,6 +26,14 @@ public class LauncherView
     private readonly StyledPanel _panel;
     private float _panelBaseY;
 
+    // Issue #38: the ctor hooks the root viewport's SizeChanged, and the root
+    // viewport outlives LauncherUI (freed at the PLAY handoff). Keep the exact
+    // delegate so DetachViewportHook can disconnect it — otherwise the stale
+    // connection fires against the disposed LauncherUI on every fold/unfold/
+    // rotate for the rest of the game session (ObjectDisposedException).
+    private Viewport _hookedViewport;
+    private Action _viewportSizeChangedHandler;
+
     // Exposed so the controller can use this Control as a parent when adding
     // overlays (e.g. CloudConflictDialog opened from the Save Manager button).
     public Control RootControl => _parent;
@@ -82,7 +90,9 @@ public class LauncherView
         // restored in v0.3.8.)
         var vp = parent.GetViewport();
         if (vp != null)
-            vp.SizeChanged += () =>
+        {
+            _hookedViewport = vp;
+            _viewportSizeChangedHandler = () =>
             {
                 // Wrapped: an exception thrown from a signal callback is swallowed
                 // by the native emitter (only ExceptionUtils logs it, with the C#
@@ -90,6 +100,15 @@ public class LauncherView
                 // orientation flips. Log the full exception here to pinpoint it.
                 try
                 {
+                    // Issue #38 second line of defense: if a teardown path ever
+                    // skips DetachViewportHook (e.g. game-side removal where
+                    // OnExitTree itself faulted), self-detach instead of hitting
+                    // the disposed LauncherUI on every hinge/rotate event.
+                    if (!GodotObject.IsInstanceValid(_parent))
+                    {
+                        DetachViewportHook();
+                        return;
+                    }
                     OnViewportSizeChanged();
                 }
                 catch (Exception ex)
@@ -97,8 +116,12 @@ public class LauncherView
                     PatchHelper.Log($"[Launcher] Viewport SizeChanged handler failed: {ex}");
                 }
             };
+            vp.SizeChanged += _viewportSizeChangedHandler;
+        }
         else
+        {
             PatchHelper.Log("[Launcher] No viewport at construction; resize hook skipped");
+        }
 
         var hbox = new HBoxContainer();
         hbox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -278,6 +301,31 @@ public class LauncherView
         // CenterContainer so its natural position stays (0,0) regardless
         // of viewport size — the initial capture is enough.
         PatchHelper.Log($"[Launcher] Viewport SizeChanged -> {newSize}; panel resized");
+    }
+
+    // Issue #38: called from LauncherUI.OnExitTree. The root viewport lives for
+    // the whole app, so without an explicit disconnect the ctor's SizeChanged
+    // connection survives launcher.QueueFree() and throws ObjectDisposedException
+    // on every fold/unfold/rotate during gameplay (Fold 7 report: 11 hits/session,
+    // one per hinge transition). Idempotent — safe to call more than once.
+    public void DetachViewportHook()
+    {
+        var vp = _hookedViewport;
+        var handler = _viewportSizeChangedHandler;
+        _hookedViewport = null;
+        _viewportSizeChangedHandler = null;
+        if (vp == null || handler == null)
+            return;
+        try
+        {
+            if (GodotObject.IsInstanceValid(vp))
+                vp.SizeChanged -= handler;
+            PatchHelper.Log("[Launcher] Viewport SizeChanged hook detached");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] Viewport hook detach failed: {ex.Message}");
+        }
     }
 
     public void SetModHubOrientation(bool portrait)
