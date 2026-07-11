@@ -24,60 +24,108 @@ public class WorkshopBrowseCard : PanelContainer
     private readonly StyledButton _actionButton;
     private bool _subscribed;
 
-    public WorkshopBrowseCard(WorkshopItemDetails item, float scale, string badge, bool subscribed)
+    // compact = portrait layout: smaller action buttons so the text column keeps
+    // enough width (landscape sizes squeezed portrait rows into clipping).
+    public WorkshopBrowseCard(
+        WorkshopItemDetails item,
+        float scale,
+        string badge,
+        bool subscribed,
+        bool compact = false
+    )
     {
         _scale = scale;
         PublishedFileId = item.PublishedFileId;
+        int btnFont = compact ? Ui.FontMicro : Ui.FontCaption;
+        int btnHeight = compact ? 40 : 44;
 
         AddThemeStyleboxOverride("panel", Ui.CardStyle(scale));
 
+        // The card body carries NO tap handler: an earlier tap-to-detail overlay
+        // (a full-area Button, then a Pass detector) intercepted the touch-down and
+        // killed the ScrollContainer's drag-to-scroll — the list only scrolled via
+        // the scrollbar (user report). Detail entry is an explicit DETAIL button
+        // instead, so the body is purely scrollable, exactly like the first working
+        // Mod Hub build (commit ab4ec9c).
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
-        row.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(row);
 
         _thumb = new TextureRect();
         _thumb.CustomMinimumSize = new Vector2((int)(96 * scale), (int)(54 * scale));
         _thumb.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
         _thumb.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
-        _thumb.MouseFilter = MouseFilterEnum.Ignore;
         var thumbBg = new StyleBoxFlat();
         thumbBg.BgColor = new Color(0.28f, 0.28f, 0.32f);
         thumbBg.SetCornerRadiusAll((int)(3 * scale));
         var thumbPanel = new PanelContainer();
         thumbPanel.AddThemeStyleboxOverride("panel", thumbBg);
         thumbPanel.CustomMinimumSize = new Vector2((int)(96 * scale), (int)(54 * scale));
-        thumbPanel.MouseFilter = MouseFilterEnum.Ignore;
         thumbPanel.AddChild(_thumb);
         row.AddChild(thumbPanel);
 
         var info = new VBoxContainer();
         info.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         info.AddThemeConstantOverride("separation", (int)(2 * scale));
-        info.MouseFilter = MouseFilterEnum.Ignore;
         row.AddChild(info);
 
-        var titleLabel = new StyledLabel(item.Title, scale, fontSize: 14, align: HorizontalAlignment.Left);
+        var titleLabel = new StyledLabel(
+            item.Title,
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Left
+        );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         info.AddChild(titleLabel);
 
         var statsText =
             $"{item.Subscriptions} subscriber(s) · {STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize)} · {(item.VoteScore * 100f):F0}% rated";
-        var statsLabel = new StyledLabel(statsText, scale, fontSize: Ui.FontMicro, align: HorizontalAlignment.Left);
+        var statsLabel = new StyledLabel(
+            statsText,
+            scale,
+            fontSize: Ui.FontMicro,
+            align: HorizontalAlignment.Left
+        );
+        // Wrap instead of clipping — in portrait the text column is narrow and this
+        // single stats line used to run off the edge (user report: 세로 글자 잘림).
+        statsLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        statsLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         statsLabel.AddThemeColorOverride("font_color", Ui.TextSecondary);
         info.AddChild(statsLabel);
 
-        _badgeLabel = new StyledLabel("", scale, fontSize: Ui.FontMicro, align: HorizontalAlignment.Left);
+        _badgeLabel = new StyledLabel(
+            "",
+            scale,
+            fontSize: Ui.FontMicro,
+            align: HorizontalAlignment.Left
+        );
         info.AddChild(_badgeLabel);
+
+        // Explicit detail entry, left of the action button — replaces card-body
+        // tap so scrolling and tapping never fight over the same touch.
+        var detailButton = new StyledButton(
+            "DETAIL",
+            scale,
+            fontSize: btnFont,
+            height: btnHeight,
+            variant: ButtonVariant.Secondary
+        );
+        // Fit-to-text width so it doesn't steal width from the title/stats column.
+        detailButton.CustomMinimumSize = new Vector2(0, (int)(btnHeight * scale));
+        detailButton.Pressed += () => DetailRequested?.Invoke();
+        row.AddChild(detailButton);
 
         _actionButton = new StyledButton(
             "SUBSCRIBE",
             scale,
-            fontSize: Ui.FontCaption,
-            height: 44,
+            fontSize: btnFont,
+            height: btnHeight,
             variant: ButtonVariant.Primary
         );
-        _actionButton.CustomMinimumSize = new Vector2((int)(140 * scale), (int)(44 * scale));
+        _actionButton.CustomMinimumSize = new Vector2(
+            (int)((compact ? 110 : 140) * scale),
+            (int)(btnHeight * scale)
+        );
         _actionButton.Pressed += () =>
         {
             if (_subscribed)
@@ -87,14 +135,14 @@ public class WorkshopBrowseCard : PanelContainer
         };
         row.AddChild(_actionButton);
 
-        // Tapping the card body (not the action button) opens the detail page;
-        // drags fall through to the ScrollContainer so the list stays scrollable.
-        TapGesture.Attach(this, () => DetailRequested?.Invoke());
-
         ApplyStatus(badge, subscribed);
     }
 
     public void SetThumbnail(Texture2D tex) => _thumb.Texture = tex;
+
+    // Lets a rebuild (orientation flip re-render) carry the already-decoded
+    // thumbnail over to the replacement card instead of re-hitting the cache.
+    public Texture2D CurrentThumbnail => _thumb.Texture;
 
     public void SetBusy(bool busy) => _actionButton.Disabled = busy;
 
@@ -129,6 +177,9 @@ public class WorkshopBrowseCard : PanelContainer
         // destructive actions read as Danger EVERYWHERE, same as the SUBSCRIBED
         // tab (user report: the two screens disagreed).
         _actionButton.Text = subscribed ? "UNSUBSCRIBE" : "SUBSCRIBE";
-        _actionButton.ApplyVariant(_scale, subscribed ? ButtonVariant.Danger : ButtonVariant.Primary);
+        _actionButton.ApplyVariant(
+            _scale,
+            subscribed ? ButtonVariant.Danger : ButtonVariant.Primary
+        );
     }
 }

@@ -65,6 +65,8 @@ public class ModManagerSection : VBoxContainer
     private int _activeTab = TabLocal;
     private bool _importInFlight;
     private bool _idleSuspended;
+    private bool _sizeHooked;
+    private bool _lastPortraitLayout;
 
     public ModManagerSection(float scale)
     {
@@ -115,7 +117,10 @@ public class ModManagerSection : VBoxContainer
             height: Ui.TouchHeight,
             variant: ButtonVariant.Ghost
         );
-        _orientButton.CustomMinimumSize = new Vector2((int)(110 * scale), (int)(Ui.TouchHeight * scale));
+        _orientButton.CustomMinimumSize = new Vector2(
+            (int)(110 * scale),
+            (int)(Ui.TouchHeight * scale)
+        );
         _orientButton.Pressed += OnOrientToggle;
         header.AddChild(_orientButton);
 
@@ -161,7 +166,10 @@ public class ModManagerSection : VBoxContainer
         AddChild(_localPane);
 
         var localHint = new StyledLabel(
-            Loc.Tr("모드 활성화는 게임 내 Mods 메뉴에서 관리됩니다.","Mod activation is managed in the game's Mods menu."),
+            Loc.Tr(
+                "모드 활성화는 게임 내 Mods 메뉴에서 관리됩니다.",
+                "Mod activation is managed in the game's Mods menu."
+            ),
             scale,
             fontSize: 12
         );
@@ -196,6 +204,7 @@ public class ModManagerSection : VBoxContainer
         localScroll.SizeFlagsVertical = SizeFlags.ExpandFill;
         localScroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
         _localPane.AddChild(localScroll);
+        TouchScroll.Attach(localScroll);
 
         _listContainer = new VBoxContainer();
         _listContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -235,13 +244,91 @@ public class ModManagerSection : VBoxContainer
     // Called by LauncherView.ShowModManager() every time the hub is opened.
     // Re-activates whichever tab is currently selected (LOCAL always rescans;
     // WORKSHOP/SUBSCRIBED/DOWNLOADS re-check the session and refresh).
-    public void Refresh() => SelectTab(_activeTab);
+    public void Refresh()
+    {
+        EnsureSizeHook();
+        SelectTab(_activeTab);
+    }
 
-    private static readonly string[] TabLogNames = { "WORKSHOP", "SUBSCRIBED", "LOCAL", "DOWNLOADS" };
+    // Rows/cards pick portrait-vs-landscape button sizes at construction, so an
+    // orientation flip must re-render the visible lists. Window.SizeChanged also
+    // fires for the soft keyboard (adjustResize); comparing the ASPECT filters
+    // those out — only a real portrait<->landscape flip triggers a re-render.
+    private void EnsureSizeHook()
+    {
+        if (_sizeHooked || !IsInsideTree())
+            return;
+        _sizeHooked = true;
+        _lastPortraitLayout = Ui.IsPortrait(this);
+        try
+        {
+            GetWindow().SizeChanged += OnWindowSizeChanged;
+            TreeExiting += () =>
+            {
+                try
+                {
+                    GetWindow().SizeChanged -= OnWindowSizeChanged;
+                }
+                catch
+                {
+                    // window may already be gone during teardown
+                }
+            };
+            PatchHelper.Log(
+                "[Mods] Input env: emulate_mouse_from_touch="
+                    + $"{ProjectSettings.GetSetting("input_devices/pointing/emulate_mouse_from_touch")}, "
+                    + $"deadzone={ProjectSettings.GetSetting("gui/common/default_scroll_deadzone")}, "
+                    + $"vp={GetViewport()?.GetVisibleRect().Size}"
+            );
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] Size hook failed: {ex.Message}");
+        }
+    }
+
+    private void OnWindowSizeChanged()
+    {
+        // Signal callback: exceptions here are swallowed by the native emitter
+        // with the C# frames elided — log them fully instead.
+        try
+        {
+            bool portrait = Ui.IsPortrait(this);
+            if (portrait == _lastPortraitLayout)
+                return;
+            _lastPortraitLayout = portrait;
+            if (!Visible)
+                return;
+
+            // Defer one frame so the flip re-render sees the settled viewport size.
+            Callable
+                .From(() =>
+                {
+                    _workshopPane.ReRenderCards();
+                    if (_activeTab != TabWorkshop)
+                        SelectTab(_activeTab);
+                })
+                .CallDeferred();
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] Window SizeChanged handler failed: {ex}");
+        }
+    }
+
+    private static readonly string[] TabLogNames =
+    {
+        "WORKSHOP",
+        "SUBSCRIBED",
+        "LOCAL",
+        "DOWNLOADS",
+    };
 
     private void SelectTab(int index)
     {
-        PatchHelper.Log($"[Mods] Tab -> {(index >= 0 && index < TabLogNames.Length ? TabLogNames[index] : index.ToString())}");
+        PatchHelper.Log(
+            $"[Mods] Tab -> {(index >= 0 && index < TabLogNames.Length ? TabLogNames[index] : index.ToString())}"
+        );
         _activeTab = index;
         for (int i = 0; i < _tabButtons.Length; i++)
         {
@@ -362,8 +449,37 @@ public class ModManagerSection : VBoxContainer
     {
         _portrait = !_portrait;
         PatchHelper.Log($"[Mods] Orientation -> {(_portrait ? "portrait" : "landscape")}");
-        _orientButton.Text = _portrait ? Loc.Tr("⤢ 가로", "⤢ Landscape") : Loc.Tr("⤢ 세로", "⤢ Portrait");
+        _orientButton.Text = _portrait
+            ? Loc.Tr("⤢ 가로", "⤢ Landscape")
+            : Loc.Tr("⤢ 세로", "⤢ Portrait");
+
+        // Opaque cover over the flip: the rotation re-layout (surface rotate +
+        // ContentScale swap + list re-render) visibly squashes every control for a
+        // few frames (user report). Hide the transition behind a background-color
+        // shield that outlives the resize storm, then self-removes.
+        ShowRotationCover();
+
         OrientationChangeRequested?.Invoke(_portrait);
+    }
+
+    private void ShowRotationCover()
+    {
+        try
+        {
+            var cover = new ColorRect { Color = Ui.Bg, MouseFilter = MouseFilterEnum.Stop };
+            cover.SetAnchorsPreset(LayoutPreset.FullRect);
+            LauncherOverlay.Show(this, cover);
+            var timer = GetTree().CreateTimer(0.55);
+            timer.Timeout += () =>
+            {
+                if (IsInstanceValid(cover))
+                    cover.QueueFree();
+            };
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] Rotation cover failed: {ex.Message}");
+        }
     }
 
     private void BeginBusy(string message)
@@ -417,7 +533,10 @@ public class ModManagerSection : VBoxContainer
         if (!AppPaths.HasStoragePermission())
         {
             SetStatus(
-                Loc.Tr("모드를 관리하려면 저장소 권한이 필요합니다.","Storage permission is required to manage mods."),
+                Loc.Tr(
+                    "모드를 관리하려면 저장소 권한이 필요합니다.",
+                    "Storage permission is required to manage mods."
+                ),
                 WarnColor
             );
             _permissionButton.Visible = true;
@@ -453,15 +572,24 @@ public class ModManagerSection : VBoxContainer
             _listContainer.AddChild(
                 Ui.MakeEmptyState(
                     null,
-                    Loc.Tr("설치된 로컬 모드가 없습니다.","No local mods installed."),
-                    Loc.Tr("\"Import Mod (.zip)\"를 누르거나 WORKSHOP 탭에서 구독하세요.","Tap \"Import Mod (.zip)\", or subscribe on the WORKSHOP tab."),
+                    Loc.Tr("설치된 로컬 모드가 없습니다.", "No local mods installed."),
+                    Loc.Tr(
+                        "\"Import Mod (.zip)\"를 누르거나 WORKSHOP 탭에서 구독하세요.",
+                        "Tap \"Import Mod (.zip)\", or subscribe on the WORKSHOP tab."
+                    ),
                     _scale
                 )
             );
             return;
         }
 
-        SetStatus(Loc.Tr($"로컬 모드 {localInfos.Count}개 설치됨.",$"{localInfos.Count} local mod(s) installed."), InfoColor);
+        SetStatus(
+            Loc.Tr(
+                $"로컬 모드 {localInfos.Count}개 설치됨.",
+                $"{localInfos.Count} local mod(s) installed."
+            ),
+            InfoColor
+        );
 
         var gameVersion = TryReadGameVersion();
         foreach (var info in localInfos)
@@ -474,10 +602,16 @@ public class ModManagerSection : VBoxContainer
             )
                 warning = $"Requires game {info.Manifest.MinGameVersion}+";
 
-            var row = new ModListRow(info, _scale, badge: info.Disabled ? "Disabled" : null);
+            var row = new ModListRow(
+                info,
+                _scale,
+                badge: info.Disabled ? "Disabled" : null,
+                compact: Ui.IsPortrait(this)
+            );
             var capturedInfo = info;
             var capturedWarning = warning;
-            row.DetailRequested += () => ShowLocalDetail(capturedInfo, capturedWarning, removable: true);
+            row.DetailRequested += () =>
+                ShowLocalDetail(capturedInfo, capturedWarning, removable: true);
             _listContainer.AddChild(row);
         }
 
@@ -490,7 +624,12 @@ public class ModManagerSection : VBoxContainer
                 Manifest = manifest,
                 ReadmeSnippet = null,
             };
-            var row = new ModListRow(info, _scale, badge: "Unmanaged — root files");
+            var row = new ModListRow(
+                info,
+                _scale,
+                badge: "Unmanaged — root files",
+                compact: Ui.IsPortrait(this)
+            );
             var capturedInfo = info;
             row.DetailRequested += () => ShowLocalDetail(capturedInfo, null, removable: false);
             _listContainer.AddChild(row);
@@ -500,7 +639,9 @@ public class ModManagerSection : VBoxContainer
     // Full detail page for a local mod, opened by tapping its row.
     private void ShowLocalDetail(ModEntryInfo info, string warning, bool removable)
     {
-        PatchHelper.Log($"[Mods] LOCAL row tapped -> detail: '{info.Id}' (disabled={info.Disabled})");
+        PatchHelper.Log(
+            $"[Mods] LOCAL row tapped -> detail: '{info.Id}' (disabled={info.Disabled})"
+        );
         var m = info.Manifest;
         var subtitle = string.Join(
             " · ",
@@ -532,7 +673,10 @@ public class ModManagerSection : VBoxContainer
             actionCallback: removable ? () => OnRowRemovePressed(info) : null,
             actionDanger: true,
             action2Label: removable ? (info.Disabled ? "Enable" : "Disable") : null,
-            action2Callback: removable ? () => OnLocalStashTogglePressed(info) : null
+            action2Callback: removable ? () => OnLocalStashTogglePressed(info) : null,
+            // Same semantic color as the SUBSCRIBED rows: Enable=Accent,
+            // Disable=Secondary (was hardcoded Accent → 색이 화면마다 달랐음).
+            action2Variant: Ui.StashToggleVariant(info.Disabled)
         );
         LauncherOverlay.Show(this, dialog);
     }
@@ -553,7 +697,10 @@ public class ModManagerSection : VBoxContainer
                 ? (
                     wasDisabled
                         ? Loc.Tr($"'{info.Id}' 활성화됨.", $"'{info.Id}' enabled.")
-                        : Loc.Tr($"'{info.Id}' 비활성화됨(보관).", $"'{info.Id}' disabled (stashed).")
+                        : Loc.Tr(
+                            $"'{info.Id}' 비활성화됨(보관).",
+                            $"'{info.Id}' disabled (stashed)."
+                        )
                 )
                 : error,
             ok ? InfoColor : WarnColor
@@ -672,7 +819,10 @@ public class ModManagerSection : VBoxContainer
     {
         AppPaths.RequestStoragePermission();
         SetStatus(
-            Loc.Tr("권한을 허용한 뒤 여기로 돌아와 Refresh 를 누르세요.","After granting permission, return here and tap Refresh."),
+            Loc.Tr(
+                "권한을 허용한 뒤 여기로 돌아와 Refresh 를 누르세요.",
+                "After granting permission, return here and tap Refresh."
+            ),
             WarnColor
         );
     }
@@ -684,7 +834,7 @@ public class ModManagerSection : VBoxContainer
         PatchHelper.Log("[Mods] Import button tapped");
         _importInFlight = true;
         _importButton.Disabled = true;
-        SetStatus(Loc.Tr("파일 선택기 여는 중…","Opening file picker…"), InfoColor);
+        SetStatus(Loc.Tr("파일 선택기 여는 중…", "Opening file picker…"), InfoColor);
 
         // Run the whole import pipeline on the thread pool to avoid Godot's
         // SynchronizationContext being disrupted by the SAF picker's OnPause/OnResume.
@@ -747,7 +897,13 @@ public class ModManagerSection : VBoxContainer
         }
 
         var zipPath = zipPaths[index];
-        SetStatus(Loc.Tr($"가져오는 중 {index + 1}/{zipPaths.Length}…",$"Importing {index + 1}/{zipPaths.Length}…"), InfoColor);
+        SetStatus(
+            Loc.Tr(
+                $"가져오는 중 {index + 1}/{zipPaths.Length}…",
+                $"Importing {index + 1}/{zipPaths.Length}…"
+            ),
+            InfoColor
+        );
 
         try
         {
@@ -768,7 +924,10 @@ public class ModManagerSection : VBoxContainer
                     .From(() =>
                     {
                         ConfirmationRequested?.Invoke(
-                            Loc.Tr($"'{result.ModId}'은(는) 이미 설치되어 있습니다. 덮어쓸까요?",$"'{result.ModId}' is already installed. Overwrite?"),
+                            Loc.Tr(
+                                $"'{result.ModId}'은(는) 이미 설치되어 있습니다. 덮어쓸까요?",
+                                $"'{result.ModId}' is already installed. Overwrite?"
+                            ),
                             () =>
                                 _ = Task.Run(async () =>
                                 {

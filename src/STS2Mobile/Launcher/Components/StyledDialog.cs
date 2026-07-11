@@ -13,6 +13,12 @@ public class StyledDialog : ColorRect
     public event Action Confirmed;
     public event Action Cancelled;
 
+    // Set when a button resolved the dialog. Any other teardown (Android Back via
+    // ModalGate, parent teardown) counts as Cancel — without this, code awaiting
+    // Confirmed/Cancelled (ConfirmAsync in the Workshop panes) would hang forever
+    // when Back closes the dialog.
+    private bool _resolved;
+
     public StyledDialog(
         string message,
         float scale,
@@ -22,6 +28,18 @@ public class StyledDialog : ColorRect
     {
         okLabel ??= Loc.Tr("확인", "OK");
         cancelLabel ??= Loc.Tr("취소", "Cancel");
+
+        // While this dialog is up, lists underneath must not react to drags, and
+        // Android Back closes it (= Cancel) before anything else.
+        ModalGate.Register(this);
+        TreeExiting += () =>
+        {
+            if (!_resolved)
+            {
+                _resolved = true;
+                Cancelled?.Invoke();
+            }
+        };
 
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
@@ -43,6 +61,7 @@ public class StyledDialog : ColorRect
         var scroll = new ScrollContainer();
         scroll.HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled;
         vbox.AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         var label = new StyledLabel(message, scale, fontSize: 16);
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
@@ -89,6 +108,7 @@ public class StyledDialog : ColorRect
         );
         cancelButton.Pressed += () =>
         {
+            _resolved = true;
             QueueFree();
             Cancelled?.Invoke();
         };
@@ -104,6 +124,7 @@ public class StyledDialog : ColorRect
         okButton.CustomMinimumSize = new Vector2((int)(140 * scale), okButton.CustomMinimumSize.Y);
         okButton.Pressed += () =>
         {
+            _resolved = true;
             QueueFree();
             Confirmed?.Invoke();
         };

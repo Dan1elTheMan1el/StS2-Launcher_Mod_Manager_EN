@@ -73,8 +73,7 @@ public class WorkshopSyncPlan
 
     public bool HasInstallWork => ToInstall.Count > 0 || ToUpdate.Count > 0;
     public bool HasOrphans => Orphans.Count > 0;
-    public bool HasAnyWork =>
-        HasInstallWork || Orphans.Count > 0 || StaleEntries.Count > 0;
+    public bool HasAnyWork => HasInstallWork || Orphans.Count > 0 || StaleEntries.Count > 0;
 }
 
 // A subscribed item skipped because its mod id is already installed from another
@@ -109,7 +108,8 @@ public class WorkshopSyncResult
     public IEnumerable<WorkshopSyncItemResult> Installed => Of(WorkshopSyncAction.Installed);
     public IEnumerable<WorkshopSyncItemResult> Updated => Of(WorkshopSyncAction.Updated);
     public IEnumerable<WorkshopSyncItemResult> Removed => Of(WorkshopSyncAction.Removed);
-    public IEnumerable<WorkshopSyncItemResult> EntriesCleaned => Of(WorkshopSyncAction.EntryCleaned);
+    public IEnumerable<WorkshopSyncItemResult> EntriesCleaned =>
+        Of(WorkshopSyncAction.EntryCleaned);
     public IEnumerable<WorkshopSyncItemResult> Conflicts => Of(WorkshopSyncAction.Conflict);
     public IEnumerable<WorkshopSyncItemResult> NoManifest => Of(WorkshopSyncAction.NoManifest);
     public IEnumerable<WorkshopSyncItemResult> Failed => Of(WorkshopSyncAction.Failed);
@@ -166,9 +166,10 @@ public static class WorkshopSyncService
             subscriptions,
             cfg.Mods,
             installedIds,
-            id => byId.TryGetValue(id, out var e) && e.Manifest?.DisplayName != null
-                ? e.Manifest.DisplayName
-                : id,
+            id =>
+                byId.TryGetValue(id, out var e) && e.Manifest?.DisplayName != null
+                    ? e.Manifest.DisplayName
+                    : id,
             cfg.ConflictRecords,
             disabledIds
         );
@@ -392,8 +393,9 @@ public static class WorkshopSyncService
                 continue;
             }
 
-            var action = install.Success
-                ? (isUpdate ? WorkshopSyncAction.Updated : WorkshopSyncAction.Installed)
+            var action =
+                install.Success
+                    ? (isUpdate ? WorkshopSyncAction.Updated : WorkshopSyncAction.Installed)
                 : install.Conflict ? WorkshopSyncAction.Conflict
                 : install.NoManifest ? WorkshopSyncAction.NoManifest
                 : WorkshopSyncAction.Failed;
@@ -605,7 +607,9 @@ public static class WorkshopSyncService
                 PublishedFileId = mod.PublishedFileId,
                 ModId = mod.Id,
                 Title = mod.DisplayName,
-                Action = deleteFolder ? WorkshopSyncAction.Removed : WorkshopSyncAction.EntryCleaned,
+                Action = deleteFolder
+                    ? WorkshopSyncAction.Removed
+                    : WorkshopSyncAction.EntryCleaned,
             }
         );
         return true;

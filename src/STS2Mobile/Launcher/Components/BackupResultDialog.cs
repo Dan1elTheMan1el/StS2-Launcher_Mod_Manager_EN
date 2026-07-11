@@ -45,11 +45,7 @@ public class BackupResultDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(14 * scale));
         dialogBox.AddChild(vbox);
 
-        var title = new StyledLabel(
-            success ? "백업 완료" : "백업 실패",
-            scale,
-            fontSize: 20
-        );
+        var title = new StyledLabel(success ? "백업 완료" : "백업 실패", scale, fontSize: 20);
         vbox.AddChild(title);
 
         if (success)

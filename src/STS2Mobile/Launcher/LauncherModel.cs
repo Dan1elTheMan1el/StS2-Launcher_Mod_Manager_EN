@@ -461,14 +461,7 @@ public class LauncherModel : IDisposable
             if (srcDll == null)
                 return false;
 
-            var destDll = Path.Combine(
-                dataDir,
-                ".godot",
-                "mono",
-                "publish",
-                "arm64",
-                "sts2.dll"
-            );
+            var destDll = Path.Combine(dataDir, ".godot", "mono", "publish", "arm64", "sts2.dll");
             if (!File.Exists(destDll))
                 return true; // nothing loaded on disk to match — treat as replaced
 

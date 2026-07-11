@@ -8,6 +8,7 @@ public class ActionSection : VBoxContainer
 {
     public event Action LaunchPressed;
     public event Action RetryPressed;
+
     // Issue #36 Part A: Local Backup is now a one-shot action, not a persisted
     // on/off mode. Pressing it triggers a manual full-tree snapshot.
     public event Action LocalBackupPressed;

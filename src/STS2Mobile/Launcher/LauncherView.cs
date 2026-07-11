@@ -84,19 +84,21 @@ public class LauncherView
         if (vp != null)
             vp.SizeChanged += () =>
             {
-                var newSize = vp.GetVisibleRect().Size;
-                parent.Size = newSize;
-                _panel.UpdateSizeFromViewport(newSize);
-                // Don't recapture _panelBaseY here. The virtual keyboard appearing
-                // also fires SizeChanged (viewport shrinks for the keyboard), and
-                // by the time we run, UpdateKeyboardOffset has already moved
-                // _panel.Position.Y up by the offset. Capturing now would lock the
-                // base at the offset-up position, leaving the panel stuck high
-                // after the keyboard dismisses. The panel is a FullRect-anchored
-                // CenterContainer so its natural position stays (0,0) regardless
-                // of viewport size — the initial capture is enough.
-                PatchHelper.Log($"[Launcher] Viewport SizeChanged -> {newSize}; panel resized");
+                // Wrapped: an exception thrown from a signal callback is swallowed
+                // by the native emitter (only ExceptionUtils logs it, with the C#
+                // frames elided) — device logs showed an unattributed NRE during
+                // orientation flips. Log the full exception here to pinpoint it.
+                try
+                {
+                    OnViewportSizeChanged();
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log($"[Launcher] Viewport SizeChanged handler failed: {ex}");
+                }
             };
+        else
+            PatchHelper.Log("[Launcher] No viewport at construction; resize hook skipped");
 
         var hbox = new HBoxContainer();
         hbox.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -258,6 +260,26 @@ public class LauncherView
     // Mod Hub only. Swaps the pinned ContentScaleSize so the whole UI tree
     // re-stretches; the viewport SizeChanged handler (constructor) then resizes the
     // panel. The game sets its own orientation on launch, so this never leaks out.
+    // Body of the viewport SizeChanged hook (fold/unfold/rotate/keyboard).
+    private void OnViewportSizeChanged()
+    {
+        var vp = _parent.GetViewport();
+        if (vp == null)
+            return;
+        var newSize = vp.GetVisibleRect().Size;
+        _parent.Size = newSize;
+        _panel.UpdateSizeFromViewport(newSize);
+        // Don't recapture _panelBaseY here. The virtual keyboard appearing
+        // also fires SizeChanged (viewport shrinks for the keyboard), and
+        // by the time we run, UpdateKeyboardOffset has already moved
+        // _panel.Position.Y up by the offset. Capturing now would lock the
+        // base at the offset-up position, leaving the panel stuck high
+        // after the keyboard dismisses. The panel is a FullRect-anchored
+        // CenterContainer so its natural position stays (0,0) regardless
+        // of viewport size — the initial capture is enough.
+        PatchHelper.Log($"[Launcher] Viewport SizeChanged -> {newSize}; panel resized");
+    }
+
     public void SetModHubOrientation(bool portrait)
     {
         try

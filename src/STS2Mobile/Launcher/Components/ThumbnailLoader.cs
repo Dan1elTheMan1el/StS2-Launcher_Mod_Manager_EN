@@ -28,12 +28,7 @@ public static class ThumbnailLoader
 
             if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
                 err = image.LoadJpgFromBuffer(bytes);
-            else if (
-                bytes[0] == 0x89
-                && bytes[1] == 0x50
-                && bytes[2] == 0x4E
-                && bytes[3] == 0x47
-            )
+            else if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
                 err = image.LoadPngFromBuffer(bytes);
             else if (
                 bytes[0] == (byte)'R'

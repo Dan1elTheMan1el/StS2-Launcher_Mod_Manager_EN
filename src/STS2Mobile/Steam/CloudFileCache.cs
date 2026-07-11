@@ -305,7 +305,10 @@ public class CloudFileCache
         try
         {
             _connection
-                .SendCloud<CCloud_CompleteAppUploadBatch_Request, CCloud_CompleteAppUploadBatch_Response>(
+                .SendCloud<
+                    CCloud_CompleteAppUploadBatch_Request,
+                    CCloud_CompleteAppUploadBatch_Response
+                >(
                     "CompleteAppUploadBatchBlocking",
                     new CCloud_CompleteAppUploadBatch_Request
                     {

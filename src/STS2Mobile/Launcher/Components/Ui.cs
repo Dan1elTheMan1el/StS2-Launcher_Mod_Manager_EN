@@ -59,6 +59,34 @@ public static class Ui
 
     public static int S(float scale, int v) => (int)(v * scale);
 
+    // --- Semantic action → button variant (issue #58 color audit) -----------
+    // One action, one color, EVERYWHERE it appears (list rows, detail dialogs,
+    // detail pages). Do not hand-pick variants for these actions at call sites:
+    //   SUBSCRIBE / confirm            → Primary   (filled accent)
+    //   UNSUBSCRIBE / Remove / destroy → Danger    (red outline)
+    //   ENABLE  (stash restore)        → Accent    (accent outline)
+    //   DISABLE (stash away)           → Danger    (red outline — user decision:
+    //                                    "해제한다"는 피드백이 UNSUBSCRIBE 와 같은
+    //                                    색으로 읽혀야 함, 2026-07-11)
+    //   DETAIL / neutral secondary     → Secondary
+    //   CLOSE / BACK / tabs / chrome   → Ghost
+    // The stash toggle flips label AND variant together so "Disable" can never
+    // render one color in a list row and another in a dialog (user report).
+    public static ButtonVariant StashToggleVariant(bool currentlyDisabled) =>
+        currentlyDisabled ? ButtonVariant.Accent : ButtonVariant.Danger;
+
+    // True when the (content-scaled) viewport is taller than wide. Rows/cards use
+    // this at construction to pick compact button sizes in portrait, where the
+    // fixed landscape widths squeezed the text column into clipping (issue #58).
+    public static bool IsPortrait(Node node)
+    {
+        var vp = node?.GetViewport();
+        if (vp == null)
+            return false;
+        var size = vp.GetVisibleRect().Size;
+        return size.Y > size.X;
+    }
+
     // --- Style factories ----------------------------------------------------
     public static StyleBoxFlat Filled(float scale, Color bg, int radius = RadiusS)
     {

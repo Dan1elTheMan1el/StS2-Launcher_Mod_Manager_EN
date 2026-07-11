@@ -132,7 +132,13 @@ public class WorkshopDownloader : IDisposable
             try
             {
                 manifest = await _cdnClient
-                    .DownloadManifestAsync(depotId, manifestId, manifestRequestCode, server, depotKey)
+                    .DownloadManifestAsync(
+                        depotId,
+                        manifestId,
+                        manifestRequestCode,
+                        server,
+                        depotKey
+                    )
                     .ConfigureAwait(false);
             }
             catch (SteamKitWebRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
@@ -163,9 +169,7 @@ public class WorkshopDownloader : IDisposable
                 $"Failed to download manifest for depot {depotId} after {MaxRetries} attempts"
             );
 
-        var files = manifest
-            .Files.Where(f => !f.Flags.HasFlag(EDepotFileFlag.Directory))
-            .ToList();
+        var files = manifest.Files.Where(f => !f.Flags.HasFlag(EDepotFileFlag.Directory)).ToList();
 
         var prog = new DownloadProgress
         {
@@ -192,7 +196,15 @@ public class WorkshopDownloader : IDisposable
                     {
                         try
                         {
-                            await DownloadFileAsync(file, depotId, depotKey, targetDir, prog, progress, ct)
+                            await DownloadFileAsync(
+                                    file,
+                                    depotId,
+                                    depotKey,
+                                    targetDir,
+                                    prog,
+                                    progress,
+                                    ct
+                                )
                                 .ConfigureAwait(false);
                             Interlocked.Increment(ref prog.CompletedFiles);
                             progress?.Report(prog);
@@ -352,8 +364,11 @@ public class WorkshopDownloader : IDisposable
         var destPath = Path.Combine(targetDir, name);
 
         using var http = new HttpClient();
-        using var resp = await http
-            .GetAsync(item.FileUrl, HttpCompletionOption.ResponseHeadersRead, ct)
+        using var resp = await http.GetAsync(
+                item.FileUrl,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct
+            )
             .ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
 

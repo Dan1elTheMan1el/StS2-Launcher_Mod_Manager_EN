@@ -85,14 +85,8 @@ public class StyledButton : Button
 
             case ButtonVariant.Ghost:
                 AddThemeStyleboxOverride("normal", Ui.Filled(scale, Colors.Transparent));
-                AddThemeStyleboxOverride(
-                    "hover",
-                    Ui.Filled(scale, new Color(1, 1, 1, 0.06f))
-                );
-                AddThemeStyleboxOverride(
-                    "pressed",
-                    Ui.Filled(scale, new Color(1, 1, 1, 0.10f))
-                );
+                AddThemeStyleboxOverride("hover", Ui.Filled(scale, new Color(1, 1, 1, 0.06f)));
+                AddThemeStyleboxOverride("pressed", Ui.Filled(scale, new Color(1, 1, 1, 0.10f)));
                 AddThemeStyleboxOverride("disabled", Ui.Filled(scale, Colors.Transparent));
                 SetFontColors(Ui.TextSecondary, Ui.TextDisabled);
                 break;

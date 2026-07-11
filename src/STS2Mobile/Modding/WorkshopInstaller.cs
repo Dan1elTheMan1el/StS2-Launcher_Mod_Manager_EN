@@ -105,9 +105,7 @@ public static class WorkshopInstaller
         }
         catch (Exception ex)
         {
-            PatchHelper.Log(
-                $"[Workshop] Download/install failed for {item.PublishedFileId}: {ex}"
-            );
+            PatchHelper.Log($"[Workshop] Download/install failed for {item.PublishedFileId}: {ex}");
             return new WorkshopInstallResult { Success = false, Error = ex.Message };
         }
         finally

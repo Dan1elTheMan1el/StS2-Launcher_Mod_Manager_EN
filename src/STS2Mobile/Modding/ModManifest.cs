@@ -131,7 +131,11 @@ public class ModManifest
     // Returns the first valid manifest found, searched breadth-first so a top-level
     // manifest wins over any nested one. Files without an id (e.g. mod_config.json)
     // naturally fail IsValid() and are skipped, matching the game.
-    public static bool TryFindManifest(string dir, out ModManifest manifest, out string manifestPath)
+    public static bool TryFindManifest(
+        string dir,
+        out ModManifest manifest,
+        out string manifestPath
+    )
     {
         foreach (var (m, path) in EnumerateManifests(dir))
         {

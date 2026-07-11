@@ -17,7 +17,12 @@ public class DownloadQueueRow : PanelContainer
         AddChild(vbox);
 
         var title = entry.Item?.Title ?? entry.ModId ?? "(unknown item)";
-        var titleLabel = new StyledLabel(title, scale, fontSize: 14, align: HorizontalAlignment.Left);
+        var titleLabel = new StyledLabel(
+            title,
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Left
+        );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         vbox.AddChild(titleLabel);
 

@@ -65,8 +65,7 @@ public static class AppPaths
     // ".." would make Path.Combine(ExternalModsDir, id) resolve to the parent — a
     // catastrophic recursive delete). Callers must gate every mod-folder delete on
     // this (issue #58: folder name may differ from id, so deletes are path-based).
-    public static bool IsDirectChildOfModsDir(string dir) =>
-        IsDirectChildOf(ExternalModsDir, dir);
+    public static bool IsDirectChildOfModsDir(string dir) => IsDirectChildOf(ExternalModsDir, dir);
 
     public static bool IsDirectChildOf(string root, string dir)
     {

@@ -37,7 +37,9 @@ public static class WorkshopThumbnailCache
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Workshop] Thumbnail cache path build failed for '{previewUrl}': {ex.Message}");
+            PatchHelper.Log(
+                $"[Workshop] Thumbnail cache path build failed for '{previewUrl}': {ex.Message}"
+            );
             return null;
         }
 
@@ -62,7 +64,9 @@ public static class WorkshopThumbnailCache
             )
             {
                 resp.EnsureSuccessStatusCode();
-                await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                await using var src = await resp
+                    .Content.ReadAsStreamAsync(ct)
+                    .ConfigureAwait(false);
                 await using var dst = File.Create(tempPath);
                 await src.CopyToAsync(dst, ct).ConfigureAwait(false);
             }
@@ -76,7 +80,9 @@ public static class WorkshopThumbnailCache
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Workshop] Thumbnail download failed for '{previewUrl}': {ex.Message}");
+            PatchHelper.Log(
+                $"[Workshop] Thumbnail download failed for '{previewUrl}': {ex.Message}"
+            );
             TryDelete(path + ".downloading");
             return null;
         }

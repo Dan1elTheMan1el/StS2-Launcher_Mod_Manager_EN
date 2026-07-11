@@ -22,9 +22,13 @@ public class ModDetailDialog : ColorRect
         Action actionCallback = null,
         bool actionDanger = false,
         string action2Label = null,
-        Action action2Callback = null
+        Action action2Callback = null,
+        ButtonVariant action2Variant = ButtonVariant.Accent
     )
     {
+        // While this dialog is up, lists underneath must not react to drags.
+        ModalGate.Register(this);
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
         MouseFilter = MouseFilterEnum.Stop;
@@ -33,8 +37,9 @@ public class ModDetailDialog : ColorRect
         GuiInput += ev =>
         {
             if (
-                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
-                or InputEventScreenTouch { Pressed: true }
+                ev
+                is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                    or InputEventScreenTouch { Pressed: true }
             )
                 QueueFree();
         };
@@ -58,14 +63,24 @@ public class ModDetailDialog : ColorRect
         vbox.CustomMinimumSize = new Vector2((int)(340 * scale), 0);
         box.AddChild(vbox);
 
-        var titleLabel = new StyledLabel(title, scale, fontSize: 18, align: HorizontalAlignment.Left);
+        var titleLabel = new StyledLabel(
+            title,
+            scale,
+            fontSize: 18,
+            align: HorizontalAlignment.Left
+        );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         titleLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         vbox.AddChild(titleLabel);
 
         if (!string.IsNullOrWhiteSpace(subtitle))
         {
-            var sub = new StyledLabel(subtitle, scale, fontSize: 12, align: HorizontalAlignment.Left);
+            var sub = new StyledLabel(
+                subtitle,
+                scale,
+                fontSize: 12,
+                align: HorizontalAlignment.Left
+            );
             sub.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             sub.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.72f));
             vbox.AddChild(sub);
@@ -73,7 +88,12 @@ public class ModDetailDialog : ColorRect
 
         if (!string.IsNullOrWhiteSpace(warning))
         {
-            var warn = new StyledLabel(warning, scale, fontSize: 12, align: HorizontalAlignment.Left);
+            var warn = new StyledLabel(
+                warning,
+                scale,
+                fontSize: 12,
+                align: HorizontalAlignment.Left
+            );
             warn.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             warn.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.3f));
             vbox.AddChild(warn);
@@ -82,6 +102,7 @@ public class ModDetailDialog : ColorRect
         var scroll = new ScrollContainer();
         scroll.CustomMinimumSize = new Vector2((int)(340 * scale), (int)(300 * scale));
         vbox.AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         var content = new VBoxContainer();
         content.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -91,7 +112,12 @@ public class ModDetailDialog : ColorRect
 
         if (!string.IsNullOrWhiteSpace(body))
         {
-            var bodyLabel = new StyledLabel(body, scale, fontSize: 13, align: HorizontalAlignment.Left);
+            var bodyLabel = new StyledLabel(
+                body,
+                scale,
+                fontSize: 13,
+                align: HorizontalAlignment.Left
+            );
             bodyLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             bodyLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             bodyLabel.AddThemeColorOverride("font_color", new Color(0.82f, 0.82f, 0.87f));
@@ -131,7 +157,7 @@ public class ModDetailDialog : ColorRect
                 scale,
                 fontSize: 13,
                 height: 48,
-                variant: ButtonVariant.Accent
+                variant: action2Variant
             );
             action2Button.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(48 * scale));
             action2Button.Pressed += () =>

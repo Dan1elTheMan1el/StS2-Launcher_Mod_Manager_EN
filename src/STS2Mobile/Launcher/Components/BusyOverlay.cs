@@ -20,6 +20,11 @@ public class BusyOverlay : ColorRect
 
     public BusyOverlay(string message, float scale)
     {
+        // Gates TouchScroll polling that GUI blocking alone can't stop, and marks
+        // itself NOT back-dismissable: Android Back is swallowed while an
+        // operation is in flight instead of closing the hub underneath it.
+        ModalGate.Register(this, backDismissable: false);
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.5f);
         MouseFilter = MouseFilterEnum.Stop;

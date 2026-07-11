@@ -342,10 +342,10 @@ public class SteamConnection : IDisposable
                 appid = (int)WorkshopAppId,
                 notify_client = true,
             };
-            await SendService<
-                CPublishedFile_Subscribe_Request,
-                CPublishedFile_Subscribe_Response
-            >("PublishedFile.Subscribe", req)
+            await SendService<CPublishedFile_Subscribe_Request, CPublishedFile_Subscribe_Response>(
+                    "PublishedFile.Subscribe",
+                    req
+                )
                 .ConfigureAwait(false);
         }
         else
@@ -365,6 +365,46 @@ public class SteamConnection : IDisposable
         }
     }
 
+    // Fetches an item's change-notes ("업데이트 노트") — the author's dated update
+    // log — for the detail page. Newest-first as Steam returns it; capped at `count`
+    // entries. Returns an empty list when the item has no change history.
+    public async Task<List<WorkshopChangeEntry>> GetChangeHistoryAsync(
+        ulong publishedFileId,
+        uint count = 20
+    )
+    {
+        var req = new CPublishedFile_GetChangeHistory_Request
+        {
+            publishedfileid = publishedFileId,
+            total_only = false,
+            startindex = 0,
+            count = count,
+            language = 0,
+        };
+
+        var resp = await SendService<
+            CPublishedFile_GetChangeHistory_Request,
+            CPublishedFile_GetChangeHistory_Response
+        >("PublishedFile.GetChangeHistory", req)
+            .ConfigureAwait(false);
+
+        var result = new List<WorkshopChangeEntry>();
+        if (resp.changes != null)
+        {
+            foreach (var c in resp.changes)
+                result.Add(
+                    new WorkshopChangeEntry
+                    {
+                        Timestamp = c.timestamp,
+                        Description = c.change_description,
+                    }
+                );
+        }
+
+        PatchHelper.Log($"[Workshop] GetChangeHistory {publishedFileId} -> {result.Count} entries");
+        return result;
+    }
+
     private static WorkshopItemDetails MapDetails(PublishedFileDetails d)
     {
         var item = new WorkshopItemDetails
@@ -374,12 +414,18 @@ public class SteamConnection : IDisposable
             Description = string.IsNullOrEmpty(d.short_description)
                 ? d.file_description
                 : d.short_description,
+            FullDescription = d.file_description,
+            Creator = d.creator,
             HContentFile = d.hcontent_file,
             FileUrl = d.file_url,
             FileName = d.filename,
             FileSize = d.file_size,
             TimeUpdated = d.time_updated,
+            TimeCreated = d.time_created,
             PreviewUrl = d.preview_url,
+            NumComments = (uint)System.Math.Max(0, d.num_comments_public),
+            Views = d.views,
+            Favorited = d.favorited,
             VoteScore = d.vote_data?.score ?? 0f,
             Subscriptions = d.subscriptions,
             Banned = d.banned,

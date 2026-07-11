@@ -21,6 +21,20 @@ public class WorkshopUpdateDialog : ColorRect
     {
         var list = titles?.ToList() ?? new List<string>();
 
+        // While this dialog is up, lists underneath must not react to drags, and
+        // Android Back closes it. TreeExiting is the single guaranteed callback
+        // path (covers Back/teardown, where the button handler never runs).
+        ModalGate.Register(this);
+        bool closeFired = false;
+        void FireClose()
+        {
+            if (closeFired)
+                return;
+            closeFired = true;
+            onClose?.Invoke();
+        }
+        TreeExiting += FireClose;
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
         MouseFilter = MouseFilterEnum.Stop;
@@ -29,12 +43,13 @@ public class WorkshopUpdateDialog : ColorRect
         GuiInput += ev =>
         {
             if (
-                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
-                or InputEventScreenTouch { Pressed: true }
+                ev
+                is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                    or InputEventScreenTouch { Pressed: true }
             )
             {
                 QueueFree();
-                onClose?.Invoke();
+                FireClose();
             }
         };
 
@@ -69,6 +84,7 @@ public class WorkshopUpdateDialog : ColorRect
         var listH = Math.Min(capH, Math.Max(1, list.Count) * rowH + 8 * scale);
         scroll.CustomMinimumSize = new Vector2((int)(320 * scale), (int)listH);
         vbox.AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         var listBox = new VBoxContainer();
         listBox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -99,7 +115,7 @@ public class WorkshopUpdateDialog : ColorRect
         closeButton.Pressed += () =>
         {
             QueueFree();
-            onClose?.Invoke();
+            FireClose();
         };
         var buttonRow = new HBoxContainer();
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;

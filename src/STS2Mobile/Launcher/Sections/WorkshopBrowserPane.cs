@@ -46,6 +46,7 @@ public class WorkshopBrowserPane : VBoxContainer
 
     private SteamConnection _connection;
     private WorkshopDownloadQueue _queue;
+    private WorkshopDetailPage _openDetailPage;
     private bool _initialized;
     private uint _page = 1;
     private uint _totalLoaded;
@@ -136,13 +137,23 @@ public class WorkshopBrowserPane : VBoxContainer
         // runaway auto-load loop that hammered the Steam connection (which in turn
         // starved the URL/ID direct lookup, freezing it).
         _scroll.GetVScrollBar().ValueChanged += _ => MaybeAutoLoad();
+        // Android-style drag scrolling (issue #58): TouchScroll drives ScrollVertical
+        // directly from _Input, so the fix works no matter what the game's input
+        // settings or the cards' children do. Setting ScrollVertical fires the
+        // scrollbar's ValueChanged, so infinite-scroll auto-load keeps working.
+        TouchScroll.Attach(_scroll);
 
         _resultsList = new VBoxContainer();
         _resultsList.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _resultsList.AddThemeConstantOverride("separation", (int)(6 * scale));
         _scroll.AddChild(_resultsList);
 
-        _loadMoreButton = new StyledButton("LOAD MORE", scale, fontSize: 13, height: Ui.TouchHeight);
+        _loadMoreButton = new StyledButton(
+            "LOAD MORE",
+            scale,
+            fontSize: 13,
+            height: Ui.TouchHeight
+        );
         _loadMoreButton.Visible = false;
         _loadMoreButton.Pressed += OnLoadMorePressed;
         AddChild(_loadMoreButton);
@@ -162,13 +173,21 @@ public class WorkshopBrowserPane : VBoxContainer
     {
         bool first = !_initialized;
         if (first)
-            RunOnMain(() => SetStatus(Loc.Tr("Steam 연결 중…","Connecting to Steam…"), InfoColor));
+            RunOnMain(() => SetStatus(Loc.Tr("Steam 연결 중…", "Connecting to Steam…"), InfoColor));
 
         var (ok, conn) = await ensureSession().ConfigureAwait(false);
         if (!ok)
         {
             _connection = null;
-            RunOnMain(() => SetStatus(Loc.Tr("창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.","Steam login is required for Workshop features."), WarnColor));
+            RunOnMain(() =>
+                SetStatus(
+                    Loc.Tr(
+                        "창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.",
+                        "Steam login is required for Workshop features."
+                    ),
+                    WarnColor
+                )
+            );
             return;
         }
         _connection = conn;
@@ -189,7 +208,13 @@ public class WorkshopBrowserPane : VBoxContainer
         RunOnMain(() =>
         {
             RefreshAllCardStatuses();
-            SetStatus(Loc.Tr($"{_totalLoaded} / {_totalAvailable}개","{_totalLoaded} / {_totalAvailable} item(s)"), InfoColor);
+            SetStatus(
+                Loc.Tr(
+                    $"{_totalLoaded} / {_totalAvailable}개",
+                    "{_totalLoaded} / {_totalAvailable} item(s)"
+                ),
+                InfoColor
+            );
         });
     }
 
@@ -307,7 +332,7 @@ public class WorkshopBrowserPane : VBoxContainer
 
         RunOnMain(() =>
         {
-            SetStatus(Loc.Tr("불러오는 중…","Loading…"), InfoColor);
+            SetStatus(Loc.Tr("불러오는 중…", "Loading…"), InfoColor);
             _searchButton.Disabled = true;
             _loadMoreButton.Disabled = true;
         });
@@ -355,7 +380,13 @@ public class WorkshopBrowserPane : VBoxContainer
                 foreach (var item in items)
                     AddResultCard(item);
                 UpdateTagChips(items);
-                SetStatus(Loc.Tr($"{_totalLoaded} / {_totalAvailable}개","{_totalLoaded} / {_totalAvailable} item(s)"), InfoColor);
+                SetStatus(
+                    Loc.Tr(
+                        $"{_totalLoaded} / {_totalAvailable}개",
+                        "{_totalLoaded} / {_totalAvailable} item(s)"
+                    ),
+                    InfoColor
+                );
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
                 _loading = false;
@@ -366,7 +397,10 @@ public class WorkshopBrowserPane : VBoxContainer
             PatchHelper.Log($"[Workshop] QueryWorkshopAsync failed: {ex}");
             RunOnMain(() =>
             {
-                SetStatus(Loc.Tr($"검색 실패: {ex.Message}",$"Workshop query failed: {ex.Message}"), WarnColor);
+                SetStatus(
+                    Loc.Tr($"검색 실패: {ex.Message}", $"Workshop query failed: {ex.Message}"),
+                    WarnColor
+                );
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
                 _loading = false;
@@ -437,7 +471,7 @@ public class WorkshopBrowserPane : VBoxContainer
         RunOnMain(() =>
         {
             ClearResults();
-            SetStatus(Loc.Tr("아이템 조회 중…","Looking up item…"), InfoColor);
+            SetStatus(Loc.Tr("아이템 조회 중…", "Looking up item…"), InfoColor);
             _searchButton.Disabled = true;
         });
 
@@ -451,7 +485,13 @@ public class WorkshopBrowserPane : VBoxContainer
             {
                 RunOnMain(() =>
                 {
-                    SetStatus(Loc.Tr("조회 시간 초과 — 다시 시도해 주세요.", "Lookup timed out — try again."), WarnColor);
+                    SetStatus(
+                        Loc.Tr(
+                            "조회 시간 초과 — 다시 시도해 주세요.",
+                            "Lookup timed out — try again."
+                        ),
+                        WarnColor
+                    );
                     _searchButton.Disabled = false;
                 });
                 return;
@@ -468,14 +508,17 @@ public class WorkshopBrowserPane : VBoxContainer
                 if (item == null)
                 {
                     SetStatus(
-                        Loc.Tr($"id {pfid} 에 해당하는 창작마당 아이템이 없습니다(또는 이 계정으로 접근 불가).",$"No Workshop item found for id {pfid} (or this account cannot access it)."),
+                        Loc.Tr(
+                            $"id {pfid} 에 해당하는 창작마당 아이템이 없습니다(또는 이 계정으로 접근 불가).",
+                            $"No Workshop item found for id {pfid} (or this account cannot access it)."
+                        ),
                         WarnColor
                     );
                 }
                 else
                 {
                     AddResultCard(item);
-                    SetStatus(Loc.Tr("1개 (직접 조회)","1 item (direct lookup)"), InfoColor);
+                    SetStatus(Loc.Tr("1개 (직접 조회)", "1 item (direct lookup)"), InfoColor);
                 }
                 _loadMoreButton.Visible = false;
                 _searchButton.Disabled = false;
@@ -487,7 +530,10 @@ public class WorkshopBrowserPane : VBoxContainer
             PatchHelper.Log($"[Workshop] Direct lookup failed for {pfid}: {ex}");
             RunOnMain(() =>
             {
-                SetStatus(Loc.Tr($"조회 실패: {ex.Message}", $"Item lookup failed: {ex.Message}"), WarnColor);
+                SetStatus(
+                    Loc.Tr($"조회 실패: {ex.Message}", $"Item lookup failed: {ex.Message}"),
+                    WarnColor
+                );
                 _searchButton.Disabled = false;
                 _loadMoreButton.Disabled = false;
             });
@@ -503,12 +549,21 @@ public class WorkshopBrowserPane : VBoxContainer
             return;
         _itemsByPfid[item.PublishedFileId] = item;
         var (badge, subscribed) = DetermineStatus(item);
-        var card = new WorkshopBrowseCard(item, _scale, badge, subscribed);
+        var card = new WorkshopBrowseCard(
+            item,
+            _scale,
+            badge,
+            subscribed,
+            compact: Ui.IsPortrait(this)
+        );
         card.SubscribeRequested += () => _ = Task.Run(() => OnSubscribeAsync(item.PublishedFileId));
-        card.UnsubscribeRequested += () => _ = Task.Run(() => OnUnsubscribeAsync(item.PublishedFileId));
+        card.UnsubscribeRequested += () =>
+            _ = Task.Run(() => OnUnsubscribeAsync(item.PublishedFileId));
         card.DetailRequested += () =>
         {
-            PatchHelper.Log($"[Workshop] Card tapped -> detail: {item.PublishedFileId} '{item.Title}'");
+            PatchHelper.Log(
+                $"[Workshop] Card tapped -> detail: {item.PublishedFileId} '{item.Title}'"
+            );
             ShowBrowseDetail(item);
         };
         _resultsList.AddChild(card);
@@ -518,32 +573,123 @@ public class WorkshopBrowserPane : VBoxContainer
             _ = Task.Run(() => LoadThumbnailAsync(item.PublishedFileId, item.PreviewUrl));
     }
 
+    // Rebuilds every result card in place (same order, thumbnails carried over) so
+    // an orientation flip re-sizes the cards for the new portrait/landscape layout.
+    // Paging state (_page/_totalLoaded/_itemsByPfid) is untouched — this is purely
+    // a visual re-render of what's already loaded. Must run on the main thread.
+    public void ReRenderCards()
+    {
+        if (_cardsByPfid.Count == 0)
+            return;
+
+        var order = new List<ulong>();
+        foreach (var child in _resultsList.GetChildren())
+        {
+            if (child is WorkshopBrowseCard c)
+                order.Add(c.PublishedFileId);
+        }
+
+        var thumbs = new Dictionary<ulong, Texture2D>();
+        foreach (var (pfid, card) in _cardsByPfid)
+        {
+            if (IsInstanceValid(card) && card.CurrentThumbnail != null)
+                thumbs[pfid] = card.CurrentThumbnail;
+        }
+
+        foreach (var child in _resultsList.GetChildren().ToList())
+        {
+            _resultsList.RemoveChild(child);
+            child.QueueFree();
+        }
+        _cardsByPfid.Clear();
+
+        foreach (var pfid in order)
+        {
+            if (!_itemsByPfid.TryGetValue(pfid, out var item))
+                continue;
+            AddResultCard(item);
+            if (
+                thumbs.TryGetValue(pfid, out var tex)
+                && _cardsByPfid.TryGetValue(pfid, out var card)
+            )
+                card.SetThumbnail(tex);
+        }
+    }
+
     private void ShowBrowseDetail(WorkshopItemDetails item)
     {
-        var subtitle = $"{item.Subscriptions} subscriber(s)";
-        var facts = new System.Collections.Generic.List<(string, string)>
-        {
-            ("Size", STS2Mobile.Launcher.LauncherModel.FormatSize((long)item.FileSize)),
-            ("Rating", $"{item.VoteScore * 100f:F0}%"),
-            ("Workshop id", item.PublishedFileId.ToString()),
-            ("Tags", item.Tags != null && item.Tags.Count > 0 ? string.Join(", ", item.Tags) : null),
-        };
-        var dialog = new ModDetailDialog(
-            item.Title,
-            subtitle,
-            null,
-            item.Description,
-            facts,
-            _scale
+        ulong pfid = item.PublishedFileId;
+        var (_, subscribed) = DetermineStatus(item);
+
+        var page = new WorkshopDetailPage(
+            item,
+            _scale,
+            subscribed,
+            compact: Ui.IsPortrait(this),
+            loadFullDetails: async () =>
+            {
+                if (_connection == null)
+                    return null;
+                var list = await _connection
+                    .GetPublishedFileDetailsAsync(new[] { pfid })
+                    .ConfigureAwait(false);
+                return list.Count > 0 ? list[0] : null;
+            },
+            loadChanges: async () =>
+            {
+                if (_connection == null)
+                    return new List<WorkshopChangeEntry>();
+                return await _connection.GetChangeHistoryAsync(pfid).ConfigureAwait(false);
+            },
+            runOnMain: RunOnMain,
+            onSubscribe: () => _ = Task.Run(() => OnSubscribeAsync(pfid)),
+            onUnsubscribe: () => _ = Task.Run(() => OnUnsubscribeAsync(pfid))
         );
-        LauncherOverlay.Show(this, dialog);
+
+        _openDetailPage = page;
+        page.TreeExiting += () =>
+        {
+            if (_openDetailPage == page)
+                _openDetailPage = null;
+        };
+        LauncherOverlay.Show(this, page);
+
+        // Reuse the thumbnail cache to fill the hero image without blocking open.
+        if (!string.IsNullOrEmpty(item.PreviewUrl))
+            _ = Task.Run(() => LoadDetailThumbnailAsync(page, item.PreviewUrl));
+    }
+
+    private async Task LoadDetailThumbnailAsync(WorkshopDetailPage page, string previewUrl)
+    {
+        try
+        {
+            var path = await WorkshopThumbnailCache
+                .GetOrDownloadAsync(previewUrl)
+                .ConfigureAwait(false);
+            if (path == null)
+                return;
+            var tex = ThumbnailLoader.LoadTexture(path);
+            if (tex == null)
+                return;
+            RunOnMain(() =>
+            {
+                if (IsInstanceValid(page))
+                    page.SetThumbnail(tex);
+            });
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Workshop] Detail thumbnail load failed: {ex.Message}");
+        }
     }
 
     private async Task LoadThumbnailAsync(ulong pfid, string previewUrl)
     {
         try
         {
-            var path = await WorkshopThumbnailCache.GetOrDownloadAsync(previewUrl).ConfigureAwait(false);
+            var path = await WorkshopThumbnailCache
+                .GetOrDownloadAsync(previewUrl)
+                .ConfigureAwait(false);
             if (path == null)
                 return;
 
@@ -597,7 +743,11 @@ public class WorkshopBrowserPane : VBoxContainer
                 )
             );
             if (!confirmed)
+            {
+                // Re-enable an open detail page's optimistically-disabled action.
+                RunOnMain(() => RefreshCardStatus(pfid));
                 return;
+            }
         }
 
         RunOnMain(() => SetCardBusy(pfid, true));
@@ -612,7 +762,11 @@ public class WorkshopBrowserPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetCardBusy(pfid, false);
-                SetStatus(Loc.Tr($"구독 실패: {ex.Message}", $"Subscribe failed: {ex.Message}"), WarnColor);
+                RefreshCardStatus(pfid);
+                SetStatus(
+                    Loc.Tr($"구독 실패: {ex.Message}", $"Subscribe failed: {ex.Message}"),
+                    WarnColor
+                );
             });
             return;
         }
@@ -635,11 +789,15 @@ public class WorkshopBrowserPane : VBoxContainer
         List<WorkshopItemDetails> deps;
         try
         {
-            deps = await _connection.GetPublishedFileDetailsAsync(item.Children).ConfigureAwait(false);
+            deps = await _connection
+                .GetPublishedFileDetailsAsync(item.Children)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Workshop] Dependency lookup failed for {item.PublishedFileId}: {ex.Message}");
+            PatchHelper.Log(
+                $"[Workshop] Dependency lookup failed for {item.PublishedFileId}: {ex.Message}"
+            );
             return;
         }
 
@@ -665,11 +823,15 @@ public class WorkshopBrowserPane : VBoxContainer
             return false;
         try
         {
-            await _connection.SetSubscriptionAsync(dep.PublishedFileId, subscribe: true).ConfigureAwait(false);
+            await _connection
+                .SetSubscriptionAsync(dep.PublishedFileId, subscribe: true)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Workshop] Dependency subscribe failed for {dep.PublishedFileId}: {ex.Message}");
+            PatchHelper.Log(
+                $"[Workshop] Dependency subscribe failed for {dep.PublishedFileId}: {ex.Message}"
+            );
             return false;
         }
         _subscribedByPfid[dep.PublishedFileId] = dep;
@@ -684,10 +846,17 @@ public class WorkshopBrowserPane : VBoxContainer
             return;
 
         var confirmed = await ConfirmAsync(
-            Loc.Tr($"'{item.Title}' 구독을 해제할까요? 기기에서 모드가 삭제됩니다.",$"Unsubscribe from '{item.Title}'? This removes the mod from your device.")
+            Loc.Tr(
+                $"'{item.Title}' 구독을 해제할까요? 기기에서 모드가 삭제됩니다.",
+                $"Unsubscribe from '{item.Title}'? This removes the mod from your device."
+            )
         );
         if (!confirmed)
+        {
+            // Re-enable an open detail page's optimistically-disabled action.
+            RunOnMain(() => RefreshCardStatus(pfid));
             return;
+        }
 
         RunOnMain(() => SetCardBusy(pfid, true));
 
@@ -704,7 +873,11 @@ public class WorkshopBrowserPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetCardBusy(pfid, false);
-                SetStatus(Loc.Tr($"구독 해제 실패: {ex.Message}",$"Unsubscribe failed: {ex.Message}"), WarnColor);
+                RefreshCardStatus(pfid);
+                SetStatus(
+                    Loc.Tr($"구독 해제 실패: {ex.Message}", $"Unsubscribe failed: {ex.Message}"),
+                    WarnColor
+                );
             });
             return;
         }
@@ -716,7 +889,15 @@ public class WorkshopBrowserPane : VBoxContainer
         {
             SetCardBusy(pfid, false);
             RefreshCardStatus(pfid);
-            SetStatus(removed ? Loc.Tr("구독 해제됨.","Unsubscribed.") : Loc.Tr("Steam 구독은 해제됨; 로컬 정리 건너뜀.","Unsubscribed on Steam; local cleanup skipped."), InfoColor);
+            SetStatus(
+                removed
+                    ? Loc.Tr("구독 해제됨.", "Unsubscribed.")
+                    : Loc.Tr(
+                        "Steam 구독은 해제됨; 로컬 정리 건너뜀.",
+                        "Unsubscribed on Steam; local cleanup skipped."
+                    ),
+                InfoColor
+            );
         });
     }
 
@@ -738,6 +919,18 @@ public class WorkshopBrowserPane : VBoxContainer
         {
             var (badge, subscribed) = DetermineStatus(item);
             card.ApplyStatus(badge, subscribed);
+        }
+
+        // Keep an open detail page's footer action in sync with the list.
+        if (
+            _openDetailPage != null
+            && IsInstanceValid(_openDetailPage)
+            && _openDetailPage.PublishedFileId == pfid
+            && _itemsByPfid.TryGetValue(pfid, out var it)
+        )
+        {
+            var (_, sub) = DetermineStatus(it);
+            _openDetailPage.ApplyStatus(sub);
         }
     }
 

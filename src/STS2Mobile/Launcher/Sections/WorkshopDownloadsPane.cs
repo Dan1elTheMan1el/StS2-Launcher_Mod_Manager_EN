@@ -52,6 +52,7 @@ public class WorkshopDownloadsPane : VBoxContainer
         scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
         scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
         AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         _list = new VBoxContainer();
         _list.SizeFlagsHorizontal = SizeFlags.ExpandFill;

@@ -30,10 +30,7 @@ public static class ModStasher
                 .Scan()
                 .FirstOrDefault(m => !m.Disabled && m.Id == info.Id);
             if (activeSameId != null)
-                return (
-                    false,
-                    $"'{info.Id}' is already enabled (at {activeSameId.TopLevelDir})."
-                );
+                return (false, $"'{info.Id}' is already enabled (at {activeSameId.TopLevelDir}).");
         }
 
         return Move(

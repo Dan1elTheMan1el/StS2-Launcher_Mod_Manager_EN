@@ -22,22 +22,27 @@ public class SubscribedModRow : PanelContainer
         Color statusColor,
         float scale,
         bool disabled = false,
-        bool showStashToggle = false
+        bool showStashToggle = false,
+        bool compact = false
     )
     {
+        // compact = portrait layout: smaller buttons so the text column keeps width.
+        int btnFont = compact ? Ui.FontMicro : Ui.FontCaption;
+        int btnHeight = compact ? 40 : 44;
         AddThemeStyleboxOverride(
             "panel",
             disabled ? Ui.CardStyle(scale, Ui.CardDown) : Ui.CardStyle(scale)
         );
 
+        // No card-body tap handler: detail entry is the explicit DETAIL button
+        // below, so the row body stays purely scrollable (a tap overlay here used
+        // to eat the ScrollContainer's drag — user report).
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", (int)(8 * scale));
-        row.MouseFilter = MouseFilterEnum.Ignore;
         AddChild(row);
 
         var vbox = new VBoxContainer();
         vbox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        vbox.MouseFilter = MouseFilterEnum.Ignore;
         vbox.AddThemeConstantOverride("separation", (int)(2 * scale));
         row.AddChild(vbox);
 
@@ -55,20 +60,39 @@ public class SubscribedModRow : PanelContainer
             titleLabel.AddThemeColorOverride("font_color", Ui.TextDisabled);
         vbox.AddChild(titleLabel);
 
-        var statusLabel = new StyledLabel(status, scale, fontSize: Ui.FontCaption, align: HorizontalAlignment.Left);
+        var statusLabel = new StyledLabel(
+            status,
+            scale,
+            fontSize: Ui.FontCaption,
+            align: HorizontalAlignment.Left
+        );
         statusLabel.AddThemeColorOverride("font_color", statusColor);
         vbox.AddChild(statusLabel);
+
+        var detailButton = new StyledButton(
+            "DETAIL",
+            scale,
+            fontSize: btnFont,
+            height: btnHeight,
+            variant: ButtonVariant.Secondary
+        );
+        detailButton.CustomMinimumSize = new Vector2(0, (int)(btnHeight * scale));
+        detailButton.Pressed += () => DetailRequested?.Invoke();
+        row.AddChild(detailButton);
 
         if (showStashToggle)
         {
             var stashButton = new StyledButton(
                 disabled ? "ENABLE" : "DISABLE",
                 scale,
-                fontSize: Ui.FontCaption,
-                height: 44,
-                variant: disabled ? ButtonVariant.Accent : ButtonVariant.Secondary
+                fontSize: btnFont,
+                height: btnHeight,
+                variant: Ui.StashToggleVariant(disabled)
             );
-            stashButton.CustomMinimumSize = new Vector2((int)(130 * scale), (int)(44 * scale));
+            stashButton.CustomMinimumSize = new Vector2(
+                (int)((compact ? 100 : 130) * scale),
+                (int)(btnHeight * scale)
+            );
             stashButton.Pressed += () => ToggleStashPressed?.Invoke();
             row.AddChild(stashButton);
         }
@@ -76,16 +100,15 @@ public class SubscribedModRow : PanelContainer
         var unsubButton = new StyledButton(
             "UNSUBSCRIBE",
             scale,
-            fontSize: Ui.FontCaption,
-            height: 44,
+            fontSize: btnFont,
+            height: btnHeight,
             variant: ButtonVariant.Danger
         );
-        unsubButton.CustomMinimumSize = new Vector2((int)(150 * scale), (int)(44 * scale));
+        unsubButton.CustomMinimumSize = new Vector2(
+            (int)((compact ? 120 : 150) * scale),
+            (int)(btnHeight * scale)
+        );
         unsubButton.Pressed += () => UnsubscribePressed?.Invoke();
         row.AddChild(unsubButton);
-
-        // Tapping the row body (not the buttons) opens the detail page; drags
-        // fall through to the ScrollContainer so the list stays scrollable.
-        TapGesture.Attach(this, () => DetailRequested?.Invoke());
     }
 }

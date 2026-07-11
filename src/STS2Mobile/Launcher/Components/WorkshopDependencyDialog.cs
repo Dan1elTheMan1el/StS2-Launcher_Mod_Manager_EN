@@ -22,6 +22,20 @@ public class WorkshopDependencyDialog : ColorRect
         Func<WorkshopItemDetails, Task<bool>> onSubscribe
     )
     {
+        // While this dialog is up, lists underneath must not react to drags, and
+        // Android Back closes it. TreeExiting guarantees Closed fires exactly once
+        // on every teardown path (buttons, outside-tap, Back).
+        ModalGate.Register(this);
+        bool closeFired = false;
+        void FireClosed()
+        {
+            if (closeFired)
+                return;
+            closeFired = true;
+            Closed?.Invoke();
+        }
+        TreeExiting += FireClosed;
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
         MouseFilter = MouseFilterEnum.Stop;
@@ -29,12 +43,13 @@ public class WorkshopDependencyDialog : ColorRect
         GuiInput += ev =>
         {
             if (
-                ev is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
-                or InputEventScreenTouch { Pressed: true }
+                ev
+                is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }
+                    or InputEventScreenTouch { Pressed: true }
             )
             {
                 QueueFree();
-                Closed?.Invoke();
+                FireClosed();
             }
         };
 
@@ -61,6 +76,7 @@ public class WorkshopDependencyDialog : ColorRect
         var scroll = new ScrollContainer();
         scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
         vbox.AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         var list = new VBoxContainer();
         list.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -143,7 +159,7 @@ public class WorkshopDependencyDialog : ColorRect
         closeButton.Pressed += () =>
         {
             QueueFree();
-            Closed?.Invoke();
+            FireClosed();
         };
         vbox.AddChild(closeButton);
 

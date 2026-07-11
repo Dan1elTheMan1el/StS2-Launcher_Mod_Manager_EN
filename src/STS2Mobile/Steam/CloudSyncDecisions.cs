@@ -657,7 +657,9 @@ public static class CloudSyncDecisions
                 $"[Cloud] Decision: cloud progress read unverified, falling back to cached size: {ex.Message}"
             );
             var mtime =
-                progressSize > 0 ? cloud.GetLastModifiedTime(progressPath) : DateTimeOffset.MinValue;
+                progressSize > 0
+                    ? cloud.GetLastModifiedTime(progressPath)
+                    : DateTimeOffset.MinValue;
             summary = SaveProgressSummary.FromContent(string.Empty, progressSize, mtime);
         }
 

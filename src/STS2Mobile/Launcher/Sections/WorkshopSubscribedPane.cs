@@ -64,6 +64,7 @@ public class WorkshopSubscribedPane : VBoxContainer
         scroll.SizeFlagsVertical = SizeFlags.ExpandFill;
         scroll.CustomMinimumSize = new Vector2(0, (int)(220 * scale));
         AddChild(scroll);
+        TouchScroll.Attach(scroll);
 
         _list = new VBoxContainer();
         _list.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -93,7 +94,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             RunOnMain(() =>
             {
                 SetStatus(
-                    Loc.Tr("창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.", "Steam login is required for Workshop features."),
+                    Loc.Tr(
+                        "창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.",
+                        "Steam login is required for Workshop features."
+                    ),
                     WarnColor
                 );
                 RenderList();
@@ -155,10 +159,19 @@ public class WorkshopSubscribedPane : VBoxContainer
             int updCount = plan.ToUpdate.Count;
             var header =
                 updCount == 0
-                    ? Loc.Tr($"새 창작마당 모드 {newCount}개 감지 — 다운로드 중:", $"{newCount} new Workshop mod(s) detected — downloading:")
-                    : newCount == 0
-                        ? Loc.Tr($"창작마당 모드 업데이트 {updCount}개 감지 — 다운로드 중:", $"{updCount} Workshop mod update(s) detected — downloading:")
-                        : Loc.Tr($"신규 {newCount}개 + 업데이트 {updCount}개 — 다운로드 중:", $"{newCount} new + {updCount} updated Workshop mod(s) — downloading:");
+                    ? Loc.Tr(
+                        $"새 창작마당 모드 {newCount}개 감지 — 다운로드 중:",
+                        $"{newCount} new Workshop mod(s) detected — downloading:"
+                    )
+                : newCount == 0
+                    ? Loc.Tr(
+                        $"창작마당 모드 업데이트 {updCount}개 감지 — 다운로드 중:",
+                        $"{updCount} Workshop mod update(s) detected — downloading:"
+                    )
+                : Loc.Tr(
+                    $"신규 {newCount}개 + 업데이트 {updCount}개 — 다운로드 중:",
+                    $"{newCount} new + {updCount} updated Workshop mod(s) — downloading:"
+                );
             RunOnMain(() =>
             {
                 var dialog = new WorkshopUpdateDialog(header, titles, _scale);
@@ -181,9 +194,13 @@ public class WorkshopSubscribedPane : VBoxContainer
             }
         }
 
-        var skippedSummary = plan.Skipped.Count > 0
-            ? Loc.Tr($" {plan.Skipped.Count}개 건너뜀.", $" {plan.Skipped.Count} item(s) skipped.")
-            : "";
+        var skippedSummary =
+            plan.Skipped.Count > 0
+                ? Loc.Tr(
+                    $" {plan.Skipped.Count}개 건너뜀.",
+                    $" {plan.Skipped.Count} item(s) skipped."
+                )
+                : "";
         RunOnMain(() =>
         {
             SetStatus(Loc.Tr("동기화됨.", "Synced.") + skippedSummary, InfoColor);
@@ -215,7 +232,9 @@ public class WorkshopSubscribedPane : VBoxContainer
         var orphanPlan = new WorkshopSyncPlan { Orphans = plan.Orphans };
         try
         {
-            await WorkshopSyncService.ExecuteAsync(conn, orphanPlan, removeOrphans: true).ConfigureAwait(false);
+            await WorkshopSyncService
+                .ExecuteAsync(conn, orphanPlan, removeOrphans: true)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -237,7 +256,10 @@ public class WorkshopSubscribedPane : VBoxContainer
         if (!_loggedIn)
         {
             var loginLabel = new StyledLabel(
-                Loc.Tr("창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.", "Steam login is required for Workshop features."),
+                Loc.Tr(
+                    "창작마당 기능을 쓰려면 Steam 로그인이 필요합니다.",
+                    "Steam login is required for Workshop features."
+                ),
                 _scale,
                 fontSize: 12
             );
@@ -257,7 +279,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             e => e
         );
 
-        var workshopMods = cfg.Mods.Where(m => m.IsWorkshop).OrderBy(m => m.Id, StringComparer.Ordinal).ToList();
+        var workshopMods = cfg
+            .Mods.Where(m => m.IsWorkshop)
+            .OrderBy(m => m.Id, StringComparer.Ordinal)
+            .ToList();
 
         // Subscribed items still in flight (queued/downloading/failed) that have no
         // registry entry yet — without these rows a fresh subscription is invisible
@@ -277,8 +302,14 @@ public class WorkshopSubscribedPane : VBoxContainer
             _list.AddChild(
                 Ui.MakeEmptyState(
                     null,
-                    Loc.Tr("아직 구독한 창작마당 모드가 없습니다.", "No Workshop subscriptions yet."),
-                    Loc.Tr("WORKSHOP 탭에서 둘러보고 구독하면 자동으로 다운로드됩니다.", "Browse the WORKSHOP tab and subscribe — items download automatically."),
+                    Loc.Tr(
+                        "아직 구독한 창작마당 모드가 없습니다.",
+                        "No Workshop subscriptions yet."
+                    ),
+                    Loc.Tr(
+                        "WORKSHOP 탭에서 둘러보고 구독하면 자동으로 다운로드됩니다.",
+                        "Browse the WORKSHOP tab and subscribe — items download automatically."
+                    ),
                     _scale
                 )
             );
@@ -298,7 +329,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             switch (q.State)
             {
                 case WorkshopDownloadState.Downloading:
-                    status = Loc.Tr($"다운로드 중 {q.ProgressPercent:F0}%", $"Downloading {q.ProgressPercent:F0}%");
+                    status = Loc.Tr(
+                        $"다운로드 중 {q.ProgressPercent:F0}%",
+                        $"Downloading {q.ProgressPercent:F0}%"
+                    );
                     statusColor = InfoColor;
                     break;
                 case WorkshopDownloadState.Failed:
@@ -317,7 +351,8 @@ public class WorkshopSubscribedPane : VBoxContainer
                 null,
                 status,
                 statusColor,
-                _scale
+                _scale,
+                compact: Ui.IsPortrait(this)
             );
             row.UnsubscribePressed += () => OnUnsubscribePfidPressed(item);
             row.DetailRequested += () => ShowItemDetail(item);
@@ -343,7 +378,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             Color statusColor;
             if (qEntry != null && qEntry.State == WorkshopDownloadState.Downloading)
             {
-                status = Loc.Tr($"다운로드 중 {qEntry.ProgressPercent:F0}%", $"Downloading {qEntry.ProgressPercent:F0}%");
+                status = Loc.Tr(
+                    $"다운로드 중 {qEntry.ProgressPercent:F0}%",
+                    $"Downloading {qEntry.ProgressPercent:F0}%"
+                );
                 statusColor = InfoColor;
             }
             else if (qEntry != null && qEntry.State == WorkshopDownloadState.Failed)
@@ -359,7 +397,10 @@ public class WorkshopSubscribedPane : VBoxContainer
             else if (disabled)
             {
                 status = disabledUpdate
-                    ? Loc.Tr("비활성 · 업데이트 있음 — 활성화 후 다운로드", "Disabled · update available — enable to download")
+                    ? Loc.Tr(
+                        "비활성 · 업데이트 있음 — 활성화 후 다운로드",
+                        "Disabled · update available — enable to download"
+                    )
                     : Loc.Tr("비활성", "Disabled");
                 statusColor = Ui.TextDisabled;
             }
@@ -388,7 +429,8 @@ public class WorkshopSubscribedPane : VBoxContainer
                 statusColor,
                 _scale,
                 disabled: disabled,
-                showStashToggle: info != null
+                showStashToggle: info != null,
+                compact: Ui.IsPortrait(this)
             );
             var capturedEntry = entry;
             var capturedInfo = info;
@@ -420,7 +462,9 @@ public class WorkshopSubscribedPane : VBoxContainer
         {
             var (ok, error) = ModStasher.Disable(info);
             SetStatus(
-                ok ? Loc.Tr($"'{entry.Id}' 비활성화됨(보관).", $"'{entry.Id}' disabled (stashed).") : error,
+                ok
+                    ? Loc.Tr($"'{entry.Id}' 비활성화됨(보관).", $"'{entry.Id}' disabled (stashed).")
+                    : error,
                 ok ? InfoColor : WarnColor
             );
             RefreshRegistryAndRender();
@@ -480,7 +524,15 @@ public class WorkshopSubscribedPane : VBoxContainer
         if (_conflicts == null || _conflicts.Count == 0)
             return;
 
-        _list.AddChild(Ui.MakeSectionHeader(Loc.Tr("수동 설치본 존재 — 창작마당 버전 미적용", "ALSO INSTALLED MANUALLY — WORKSHOP COPY NOT APPLIED"), _scale));
+        _list.AddChild(
+            Ui.MakeSectionHeader(
+                Loc.Tr(
+                    "수동 설치본 존재 — 창작마당 버전 미적용",
+                    "ALSO INSTALLED MANUALLY — WORKSHOP COPY NOT APPLIED"
+                ),
+                _scale
+            )
+        );
 
         foreach (var c in _conflicts)
         {
@@ -521,10 +573,7 @@ public class WorkshopSubscribedPane : VBoxContainer
                 fontSize: Ui.FontMicro,
                 align: HorizontalAlignment.Left
             );
-            verLabel.AddThemeColorOverride(
-                "font_color",
-                cmp > 0 ? Ui.Warn : Ui.TextSecondary
-            );
+            verLabel.AddThemeColorOverride("font_color", cmp > 0 ? Ui.Warn : Ui.TextSecondary);
             info.AddChild(verLabel);
 
             var useBtn = new StyledButton(
@@ -669,64 +718,56 @@ public class WorkshopSubscribedPane : VBoxContainer
             null
         );
 
-    // Detail page for an in-flight subscription (Workshop metadata only — nothing
-    // on disk yet).
-    private void ShowItemDetail(WorkshopItemDetails item)
-    {
-        var facts = new List<(string, string)>
-        {
-            ("Size", LauncherModel.FormatSize((long)item.FileSize)),
-            ("Workshop id", item.PublishedFileId.ToString()),
-        };
-        var dialog = new ModDetailDialog(
-            item.Title,
-            $"{item.Subscriptions} subscriber(s)",
-            null,
-            item.Description,
-            facts,
-            _scale
-        );
-        LauncherOverlay.Show(this, dialog);
-    }
+    // Detail for an in-flight subscription (Workshop metadata already in hand).
+    private void ShowItemDetail(WorkshopItemDetails item) => OpenWorkshopDetail(item);
 
+    // Detail for an installed/synced row. These are Workshop mods, so instead of
+    // echoing the local manifest json (user report: "json 안의 내용"), open the
+    // same native Workshop detail page the browser tab uses — full description,
+    // change notes, stats — seeded from a pfid stub the page fills via GetDetails.
     private void ShowSubscribedDetail(ModConfigEntry entry, ModEntryInfo info)
     {
         PatchHelper.Log($"[Workshop] SUBSCRIBED row tapped -> detail: '{entry.Id}'");
-        var m = info?.Manifest;
-        var title = m?.DisplayName ?? entry.Id;
-        var subtitle = string.Join(
-            " · ",
-            new[]
-            {
-                string.IsNullOrWhiteSpace(m?.Author) ? null : "by " + m.Author,
-                string.IsNullOrWhiteSpace(m?.Version) ? null : LauncherModel.VersionLabel(m.Version),
-            }.Where(s => s != null)
-        );
-
-        var body = m?.Description ?? "";
-        if (!string.IsNullOrWhiteSpace(info?.ReadmeSnippet))
-            body = (body.Length > 0 ? body + "\n\n" : "") + "README: " + info.ReadmeSnippet;
-
-        var facts = new List<(string, string)>
+        var stub = new WorkshopItemDetails
         {
-            ("Source", "Steam Workshop"),
-            ("Workshop id", entry.PublishedFileId.ToString()),
-            ("Min game version", m?.MinGameVersion),
-            ("Path", info?.Path),
+            PublishedFileId = entry.PublishedFileId,
+            Title = info?.Manifest?.DisplayName ?? entry.Id,
         };
+        OpenWorkshopDetail(stub);
+    }
 
-        var dialog = new ModDetailDialog(
-            title,
-            subtitle,
-            null,
-            body,
-            facts,
+    // Read-only variant of the browser tab's detail page (showAction=false): the
+    // SUBSCRIBED rows themselves carry ENABLE/DISABLE/UNSUBSCRIBE, so the page
+    // only informs. Full details + change notes load in the background.
+    private void OpenWorkshopDetail(WorkshopItemDetails item)
+    {
+        ulong pfid = item.PublishedFileId;
+        var page = new WorkshopDetailPage(
+            item,
             _scale,
-            actionLabel: "Unsubscribe",
-            actionCallback: () => OnUnsubscribePressed(entry),
-            actionDanger: true
+            subscribed: true,
+            compact: Ui.IsPortrait(this),
+            loadFullDetails: async () =>
+            {
+                if (_connection == null)
+                    return null;
+                var list = await _connection
+                    .GetPublishedFileDetailsAsync(new[] { pfid })
+                    .ConfigureAwait(false);
+                return list.Count > 0 ? list[0] : null;
+            },
+            loadChanges: async () =>
+            {
+                if (_connection == null)
+                    return new List<WorkshopChangeEntry>();
+                return await _connection.GetChangeHistoryAsync(pfid).ConfigureAwait(false);
+            },
+            runOnMain: RunOnMain,
+            onSubscribe: null,
+            onUnsubscribe: null,
+            showAction: false
         );
-        LauncherOverlay.Show(this, dialog);
+        LauncherOverlay.Show(this, page);
     }
 
     private async Task DoUnsubscribeAsync(ModConfigEntry entry)
