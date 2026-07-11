@@ -269,7 +269,7 @@ public static class WorkshopInstaller
 
             if (renamedFrom != null)
             {
-                if (!IsValidId(renamedFrom.Id))
+                if (!ModIdValidator.IsValidId(renamedFrom.Id))
                 {
                     PatchHelper.Log(
                         $"[Workshop] Item {item.PublishedFileId}: old entry id "
