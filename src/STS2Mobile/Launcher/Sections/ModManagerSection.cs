@@ -165,18 +165,6 @@ public class ModManagerSection : VBoxContainer
         _localPane.AddThemeConstantOverride("separation", (int)(8 * scale));
         AddChild(_localPane);
 
-        var localHint = new StyledLabel(
-            Loc.Tr(
-                "모드 활성화는 게임 내 Mods 메뉴에서 관리됩니다.",
-                "Mod activation is managed in the game's Mods menu."
-            ),
-            scale,
-            fontSize: 12
-        );
-        localHint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        localHint.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
-        _localPane.AddChild(localHint);
-
         _statusLabel = new StyledLabel("", scale, fontSize: 12);
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _localPane.AddChild(_statusLabel);
