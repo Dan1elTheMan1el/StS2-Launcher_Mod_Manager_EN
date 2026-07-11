@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>workshop-sync-tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Referencing the already-built STS2Mobile.dll directly (not a
+      ProjectReference) so this standalone test project never enters the APK
+      build graph and never needs the gitignored upstream/ Godot/Harmony/sts2
+      reference DLLs that STS2Mobile.csproj requires to build itself. The
+      pieces this test exercises (WorkshopSyncService.ComputePlan and its DTOs)
+      touch no Godot/Harmony/SteamKit2 types, so this reference alone is
+      sufficient both to compile and to run.
+
+      Run `dotnet build src/STS2Mobile/STS2Mobile.csproj -c Release` first to
+      produce/refresh this DLL.
+    -->
+    <Reference Include="STS2Mobile">
+      <HintPath>../../src/STS2Mobile/bin/Release/net9.0/STS2Mobile.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

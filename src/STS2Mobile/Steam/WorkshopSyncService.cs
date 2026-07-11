@@ -232,6 +232,63 @@ public static class WorkshopSyncService
         var workshopEntries = localEntries
             .Where(e => e != null && e.IsWorkshop && e.PublishedFileId != 0)
             .ToList();
+
+        // Recover pre-existing pollution: duplicate entries sharing one pfid are
+        // residue of a manifest-id rename that happened before rename detection
+        // existed in WorkshopInstaller.Install (issue #70). Pick one winner per
+        // pfid — folder-present beats folder-absent, then higher TimeUpdated,
+        // then later position in the input list — and route every loser through
+        // the existing Orphans/StaleEntries paths so already-affected users
+        // self-heal (Orphans still requires the caller's removeOrphans
+        // confirmation before anything is deleted).
+        var duplicateGroups = workshopEntries
+            .GroupBy(e => e.PublishedFileId)
+            .Where(g => g.Count() > 1)
+            .ToList();
+        if (duplicateGroups.Count > 0)
+        {
+            var losers = new HashSet<ModConfigEntry>();
+            foreach (var group in duplicateGroups)
+            {
+                var ranked = group
+                    .Select(
+                        (e, idx) =>
+                            (
+                                Entry: e,
+                                Idx: idx,
+                                FolderPresent: installedFolderIds.Contains(e.Id)
+                                    || disabledFolderIds.Contains(e.Id)
+                            )
+                    )
+                    .OrderByDescending(x => x.FolderPresent)
+                    .ThenByDescending(x => x.Entry.TimeUpdated)
+                    .ThenByDescending(x => x.Idx)
+                    .ToList();
+
+                foreach (var loser in ranked.Skip(1))
+                {
+                    losers.Add(loser.Entry);
+                    var mod = new WorkshopLocalMod
+                    {
+                        Id = loser.Entry.Id,
+                        PublishedFileId = loser.Entry.PublishedFileId,
+                        DisplayName = displayNameResolver(loser.Entry.Id),
+                    };
+                    if (
+                        installedFolderIds.Contains(loser.Entry.Id)
+                        || disabledFolderIds.Contains(loser.Entry.Id)
+                    )
+                        plan.Orphans.Add(mod);
+                    else
+                        plan.StaleEntries.Add(mod);
+                }
+            }
+            // Everything downstream (localByPfid, the subscription-driven loop,
+            // the local-driven loop) must see only the winners — losers are
+            // already accounted for above and must not be double-added there.
+            workshopEntries = workshopEntries.Where(e => !losers.Contains(e)).ToList();
+        }
+
         var localByPfid = new Dictionary<ulong, ModConfigEntry>();
         foreach (var e in workshopEntries)
             localByPfid[e.PublishedFileId] = e;
@@ -457,10 +514,14 @@ public static class WorkshopSyncService
         var cfg = ModConfig.Load();
         // Drop any remembered id-collision for this item so it doesn't linger.
         cfg.ClearConflict(publishedFileId);
-        var entry = cfg.Mods.FirstOrDefault(m =>
-            m.IsWorkshop && m.PublishedFileId == publishedFileId
-        );
-        if (entry == null)
+        // ALL entries sharing this pfid, not just one: a manifest-id rename
+        // (issue #70) that occurred before rename detection existed (or whose
+        // cleanup failed) can leave two config entries pointing at the same pfid.
+        // A FirstOrDefault here would remove one and strand the other forever.
+        var entries = cfg
+            .Mods.Where(m => m.IsWorkshop && m.PublishedFileId == publishedFileId)
+            .ToList();
+        if (entries.Count == 0)
         {
             PatchHelper.Log(
                 $"[Workshop] Unsubscribed {publishedFileId}; no local workshop entry to remove."
@@ -469,11 +530,16 @@ public static class WorkshopSyncService
             return true;
         }
 
-        var mod = new WorkshopLocalMod { Id = entry.Id, PublishedFileId = publishedFileId };
         var result = new WorkshopSyncResult();
-        RemoveWorkshopMod(cfg, mod, deleteFolder: true, result);
+        bool allRemoved = true;
+        foreach (var entry in entries)
+        {
+            var mod = new WorkshopLocalMod { Id = entry.Id, PublishedFileId = publishedFileId };
+            if (!RemoveWorkshopMod(cfg, mod, deleteFolder: true, result))
+                allRemoved = false;
+        }
         cfg.Save();
-        return true;
+        return allRemoved;
     }
 
     // Conflict resolution — "use the Workshop copy", step 1 of 2. The user has

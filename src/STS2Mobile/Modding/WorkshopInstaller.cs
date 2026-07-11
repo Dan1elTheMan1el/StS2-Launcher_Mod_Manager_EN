@@ -229,6 +229,21 @@ public static class WorkshopInstaller
             // the mod is simply absent and the next sync re-downloads it.
             Directory.Move(modRoot, dest);
 
+            // Rename detection (issue #70): WorkshopSyncService.ComputePlan joins by
+            // pfid, so an author renaming the manifest id (A -> B) between Workshop
+            // updates still looks like a normal "update" there. But this method only
+            // ever looks up the NEW id (manifest.Id) — without this check the OLD
+            // id's folder + config entry would never be found again by any code
+            // path and would linger forever, duplicated and double-loaded by the
+            // game. Only ever matches another Workshop entry of the SAME item
+            // (pfid) with a DIFFERENT id; a manual mod's entry (IsWorkshop==false)
+            // can never match.
+            var renamedFrom = cfg.Mods.FirstOrDefault(m =>
+                m.IsWorkshop
+                && m.PublishedFileId == item.PublishedFileId
+                && !string.Equals(m.Id, manifest.Id, StringComparison.Ordinal)
+            );
+
             // Upsert the registry entry, preserving user enabled/order for updates.
             if (existing == null)
             {
@@ -236,8 +251,14 @@ public static class WorkshopInstaller
                 existing = new ModConfigEntry
                 {
                     Id = manifest.Id,
-                    Enabled = true,
-                    Order = nextOrder,
+                    // A rename inherits the OLD entry's enabled/order so the user's
+                    // prior intent (and mod ordering) carries over to the new id
+                    // instead of silently resetting to enabled+last. If an entry for
+                    // manifest.Id already existed (a pre-fix polluted state), we keep
+                    // ITS values instead — see the `existing != null` path below,
+                    // which touches neither field.
+                    Enabled = renamedFrom?.Enabled ?? true,
+                    Order = renamedFrom?.Order ?? nextOrder,
                 };
                 cfg.Mods.Add(existing);
             }
@@ -245,6 +266,43 @@ public static class WorkshopInstaller
             existing.PublishedFileId = item.PublishedFileId;
             existing.TimeUpdated = item.TimeUpdated;
             cfg.ClearConflict(item.PublishedFileId);
+
+            if (renamedFrom != null)
+            {
+                if (!IsValidId(renamedFrom.Id))
+                {
+                    PatchHelper.Log(
+                        $"[Workshop] Item {item.PublishedFileId}: old entry id "
+                            + $"'{renamedFrom.Id}' failed validation — skipping stale-copy cleanup."
+                    );
+                }
+                else if (TryDeleteOldCopyFolders(renamedFrom.Id))
+                {
+                    // Only drop the config entry once its folder(s) are confirmed
+                    // gone from BOTH roots. Removing the entry first and having the
+                    // folder delete fail would leave an entry-less folder, which
+                    // ModConfig.Reconcile() would then revive as a brand-new manual
+                    // ("local") mod on the next scan — strictly worse than leaving a
+                    // duplicate workshop entry behind, which WorkshopSyncService.
+                    // ComputePlan's duplicate-pfid cleanup (issue #70 fix 3) can
+                    // still resolve on a later sync.
+                    cfg.Remove(renamedFrom.Id);
+                    PatchHelper.Log(
+                        $"[Workshop] Item {item.PublishedFileId}: manifest id renamed "
+                            + $"'{renamedFrom.Id}' -> '{manifest.Id}' — removed old copy."
+                    );
+                }
+                else
+                {
+                    PatchHelper.Log(
+                        $"[Workshop] Item {item.PublishedFileId}: manifest id renamed "
+                            + $"'{renamedFrom.Id}' -> '{manifest.Id}' but the old copy's folder(s) "
+                            + "could not be fully removed — leaving the old entry for a later sync "
+                            + "pass to clean up."
+                    );
+                }
+            }
+
             cfg.Save();
 
             PatchHelper.Log(
@@ -268,5 +326,41 @@ public static class WorkshopInstaller
                 Directory.Delete(path, recursive: true);
         }
         catch { }
+    }
+
+    // Deletes a renamed-away mod's old folder from BOTH roots (it may have been
+    // stashed in ModsDisabled/ at the time of the rename). Mirrors the guard
+    // pattern in WorkshopSyncService.RemoveWorkshopMod: each candidate must
+    // resolve to a direct child of its root before deletion, refusing anything
+    // that would escape the tree. Returns true only if no folder is left behind
+    // in either root (including "was never there").
+    private static bool TryDeleteOldCopyFolders(string id)
+    {
+        bool ok = true;
+        foreach (var root in new[] { AppPaths.ExternalModsDir, AppPaths.DisabledModsDir })
+        {
+            var dir = Path.Combine(root, id);
+            if (!AppPaths.IsDirectChildOf(root, dir))
+            {
+                PatchHelper.Log(
+                    $"[Workshop] Refusing to delete '{dir}': not a direct child of {root}."
+                );
+                ok = false;
+                continue;
+            }
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log(
+                    $"[Workshop] Failed to delete old copy folder '{dir}': {ex.Message}"
+                );
+                ok = false;
+            }
+        }
+        return ok;
     }
 }
