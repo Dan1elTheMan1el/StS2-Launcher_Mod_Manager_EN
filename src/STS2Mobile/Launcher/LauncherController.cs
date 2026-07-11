@@ -220,7 +220,25 @@ public class LauncherController
         switch (result)
         {
             case FastPathResult.ReadyToLaunch:
-                _view.SetStatus($"Welcome back, {_model.AccountName}");
+                // issue #59 — expired saved token: a boot-time choice dialog
+                // (재로그인 vs 오프라인 계속), exactly once per app launch since
+                // the fast path runs once. An earlier draft revealed the login
+                // form next to the launch stage instead, but the login form
+                // has no PLAY button — the mixed stage read as broken UI
+                // (owner feedback). Offline choice (or Back) proceeds to the
+                // normal launch stage; auth-gated features are then blocked
+                // with a restart notice (BlockIfTokenExpired) for the rest of
+                // the session.
+                if (_model.SavedTokenExpired)
+                {
+                    ShowTokenExpiredChoice();
+                    break;
+                }
+                _view.SetStatus(
+                    _model.SavedTokenExpiringSoon
+                        ? $"Welcome back, {_model.AccountName} (Steam 로그인 곧 만료 — 재로그인 권장)"
+                        : $"Welcome back, {_model.AccountName}"
+                );
                 var text = ResolveLaunchButtonText();
                 ShowLaunchStage(text, showCloudSync: true, showUpdate: true);
                 break;
@@ -335,6 +353,8 @@ public class LauncherController
     // entry point (its own button — SAVE MANAGER above keeps its 0.3.0 role).
     private void OnModsPressed()
     {
+        if (BlockIfTokenExpired())
+            return;
         PatchHelper.Log("[Mods] Mod Manager button tapped");
         _view.SetStatus("Mod Manager");
         _view.ShowModManager();
@@ -1001,6 +1021,8 @@ public class LauncherController
 
     private void OnCloudPushPressed()
     {
+        if (BlockIfTokenExpired())
+            return;
         ShowConfirmation(
             "Push local saves to cloud?\nThis will overwrite your cloud saves.",
             () =>
@@ -1052,6 +1074,8 @@ public class LauncherController
 
     private void OnCloudPullPressed()
     {
+        if (BlockIfTokenExpired())
+            return;
         ShowConfirmation(
             "Pull cloud saves to local?\nThis will overwrite your local saves.",
             () =>
@@ -1102,6 +1126,50 @@ public class LauncherController
     private void ShowConfirmation(string message, Action onConfirmed)
     {
         _view.ShowConfirmation(message, onConfirmed);
+    }
+
+    // issue #59 — boot-time choice for an expired saved token (fast path only,
+    // so exactly once per app launch). "다시 로그인" → login stage; "오프라인으로
+    // 계속" (or Android Back, which StyledDialog maps to Cancel) → the normal
+    // launch stage. No re-prompt this session: auth-gated features show the
+    // restart notice instead (BlockIfTokenExpired), since the fast path never
+    // built a login-capable session to hand re-auth mid-flight.
+    private void ShowTokenExpiredChoice()
+    {
+        var dialog = new StyledDialog(
+            "Steam 로그인이 만료되었습니다.\n"
+                + "다시 로그인하거나, 클라우드 동기화·창작마당 없이 오프라인으로 계속할 수 있습니다.",
+            LauncherUI.ResolveScale(_view.RootControl),
+            okLabel: "다시 로그인",
+            cancelLabel: "오프라인으로 계속"
+        );
+        dialog.Confirmed += () =>
+            ShowLoginStage("Steam 로그인이 만료되었습니다. 다시 로그인해 주세요.");
+        dialog.Cancelled += () =>
+        {
+            PatchHelper.Log("[Issue59] Expired-token dialog: offline chosen");
+            _view.SetStatus("오프라인 모드 — 클라우드 동기화·창작마당은 재로그인 필요");
+            ShowLaunchStage(ResolveLaunchButtonText(), showCloudSync: true, showUpdate: true);
+        };
+        _view.RootControl.AddChild(dialog);
+    }
+
+    // issue #59 — gate for auth-required features (Mod Hub, cloud Push/Pull)
+    // while the saved token is expired. Shown on EVERY attempt (owner-
+    // specified). Mid-session re-auth isn't wired for the fast path, so the
+    // honest instruction is an app restart; a successful re-login clears
+    // SavedTokenExpired (LauncherModel) and next boot re-evaluates.
+    private bool BlockIfTokenExpired()
+    {
+        if (!_model.SavedTokenExpired)
+            return false;
+        _ = SimpleResultDialog.ShowAsync(
+            _view.RootControl,
+            false,
+            "Steam 로그인이 만료되어 이 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.",
+            LauncherUI.ResolveScale(_view.RootControl)
+        );
+        return true;
     }
 
     private void OnRetryPressed()

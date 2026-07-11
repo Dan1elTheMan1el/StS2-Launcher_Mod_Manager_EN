@@ -322,6 +322,25 @@ public static class LauncherPatches
             return;
         }
 
+        // issue #59 — cloud-access gate, not an entry gate: the Save Manager's
+        // cloud mode is about to talk to Steam with a token we already know is
+        // dead, which would just burn the 15 s cache wait and silently bail.
+        // Tell the user what's actually wrong instead. (After the issue #64
+        // merge this branch point routes to the local-only menu so the local
+        // features — profile clone / backup restore — stay usable; the expired
+        // notice then only guards the cloud paths. See consolidation notes.)
+        if (RefreshTokenExpiry.IsExpired(SavedRefreshToken))
+        {
+            PatchHelper.Log("[Issue59] Save Manager: saved token expired — cloud mode blocked");
+            await Launcher.Components.SimpleResultDialog.ShowAsync(
+                parent,
+                false,
+                "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.",
+                Launcher.LauncherUI.ResolveScale(parent)
+            );
+            return;
+        }
+
         var cloudStore =
             SteamKit2CloudSaveStore.Instance
             ?? new SteamKit2CloudSaveStore(SavedAccountName, SavedRefreshToken);

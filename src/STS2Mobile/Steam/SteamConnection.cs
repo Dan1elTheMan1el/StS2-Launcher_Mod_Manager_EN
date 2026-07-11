@@ -138,13 +138,95 @@ public class SteamConnection : IDisposable
         _callbackManager.Subscribe<SteamUser.LoggedOnCallback>(cb =>
         {
             if (cb.Result == EResult.OK)
-                _connectedGate.Set();
-            else
             {
-                _connectError = new InvalidOperationException($"Login failed: {cb.Result}");
                 _connectedGate.Set();
+                return;
             }
+
+            // issue #59 — surface a "you need to log in again" message for the
+            // EResult family that actually means the saved refresh token is no
+            // longer usable, so it reads better than a raw enum name once it
+            // reaches the launcher's status label (LauncherController.cs
+            // SessionState.Failed → "Error: {FailReason}"). Anything NOT in
+            // this narrow set (TryAnotherCM/ServiceUnavailable/Timeout and
+            // similar transient network failures) keeps the exact original
+            // message — we must not reclassify a network hiccup as an auth
+            // problem and send the user down a re-login path for nothing.
+            _connectError = IsAuthFailure(cb.Result)
+                ? new InvalidOperationException(
+                    "Steam 로그인이 만료되었거나 취소되었습니다. 다시 로그인해 주세요."
+                )
+                : new InvalidOperationException($"Login failed: {cb.Result}");
+            _connectedGate.Set();
         });
+    }
+
+    // issue #59 — narrow, conservative classification of "this EResult means
+    // the refresh token itself is bad, not a transient connectivity problem".
+    // Deliberately a small allowlist rather than excluding known-transient
+    // codes: an EResult we don't recognize should NOT be assumed to need
+    // re-auth (keeps today's generic message, matching prior behavior).
+    private static bool IsAuthFailure(EResult result) =>
+        result
+            is EResult.Expired
+                or EResult.Revoked
+                or EResult.AccessDenied
+                or EResult.InvalidSignature
+                or EResult.Invalid
+                or EResult.InvalidPassword
+                or EResult.LogonSessionReplaced;
+
+    // issue #59 — opportunistic rolling refresh-token renewal. Callers (see
+    // LauncherModel.MaybeRenewRefreshTokenAsync) are expected to have already
+    // gone through EnsureConnected (directly or via any Handler property) so
+    // _client.SteamID is populated; this method itself does NOT call
+    // EnsureConnected, since calling it from inside a SteamKit2 callback
+    // handler (e.g. LoggedOnCallback) would be a sync-over-async deadlock
+    // risk — the callback-processing thread would block waiting on a response
+    // only that same thread can pump (see 05_steamkit2_research.md Q3).
+    //
+    // Returns the new refresh token string when the server actually issued
+    // one (non-empty and different from what was passed in); null otherwise
+    // — covering "no renewal happened" and "the call failed" identically,
+    // since callers only care whether they have something new to persist.
+    // Never throws: this is purely opportunistic and must not be able to
+    // break a login/connect flow. Never logs the token value itself.
+    public async Task<string> TryRenewRefreshTokenAsync(string currentRefreshToken)
+    {
+        try
+        {
+            var steamId = _client.SteamID;
+            if (steamId == null)
+            {
+                PatchHelper.Log("[Issue59] TryRenewRefreshTokenAsync: no SteamID yet, skipping");
+                return null;
+            }
+
+            var result = await _client
+                .Authentication.GenerateAccessTokenForAppAsync(
+                    steamId,
+                    currentRefreshToken,
+                    allowRenewal: true
+                )
+                .ConfigureAwait(false);
+
+            if (
+                string.IsNullOrEmpty(result.RefreshToken)
+                || result.RefreshToken == currentRefreshToken
+            )
+            {
+                PatchHelper.Log("[Issue59] TryRenewRefreshTokenAsync: no new refresh token issued");
+                return null;
+            }
+
+            PatchHelper.Log("[Issue59] TryRenewRefreshTokenAsync: server issued a new refresh token");
+            return result.RefreshToken;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Issue59] TryRenewRefreshTokenAsync failed: {ex.Message}");
+            return null;
+        }
     }
 
     // Sends a unified-service RPC (e.g. "Cloud.EnumerateUserFiles",
