@@ -14,9 +14,32 @@
 | `libsteam_api.so` | upstream 프리빌트 | — | 안드로이드에선 미사용(우리는 SteamKit2 로 Steam 을 붙인다). 사실상 잔재 |
 | `libsentry.so` | upstream 프리빌트(3.7KB 스텁) | — | Sentry 의 Android GDExtension 은 아예 없음 → 부팅 시 `No GDExtension library found ... sentry.gdextension` 은 **알려진 무해 노이즈** |
 
+## 빌드 전 체크 (다른 세션·워크트리 포함)
+
+**FMOD 4종은 `D:/git/req_files/fmod-android-2.03.13/` 에 정식 사본이 있다. 재빌드 없이 그대로 복사하면 된다:**
+
+```bash
+SRC=/d/git/req_files/fmod-android-2.03.13
+for v in release debug; do
+  cp $SRC/libfmod.so $SRC/libfmodstudio.so android/libs/$v/arm64-v8a/
+  cp $SRC/fmod.jar                          android/libs/$v/
+  cp $SRC/libGodotFmod.android.template_release.arm64.so android/libs/$v/arm64-v8a/
+  cp $SRC/libGodotFmod.android.template_release.arm64.so android/libs/$v/arm64-v8a/libGodotFmod.android.template_debug.arm64.so
+done
+```
+
+빌드 전에 항상 확인:
+```bash
+md5sum android/libs/release/arm64-v8a/libfmod.so   # 678ca6c0f92d956c3b62e08b34634a0a (FMOD 2.03.13)
+md5sum android/libs/release/arm64-v8a/libGodotFmod.android.template_release.arm64.so  # 19611f81685e8550a7bba1d6fa9e2f5f
+```
+다른 값이면 **구버전 FMOD 로 빌드하는 것**이다(issue #78 재현). 2026-07-12 시점에 구 FMOD(2.02) 바이너리는 이 PC 의 모든 워크트리·vanilla 클론·gradle 캐시에서 제거했다. 굳이 구 바이너리가 필요하면 `req_files/StS2Launcher-v0.2.0.apk` 의 `lib/arm64-v8a/` 에서 꺼낼 수 있다.
+
+> FMOD SDK 자체는 `vendor/fmod-sdk/`(= 2.03.13, 헤더 포함)에 이미 벤더링되어 있다. **이 SDK 는 내내 repo 안에 있었는데 `android/libs/` 에는 upstream 프리빌트(2.02)가 들어가 있었다** — 그래서 아무도 버전 불일치를 눈치채지 못했다.
+
 ## libGodotFmod 재빌드 절차 (검증됨, 2026-07-12)
 
-전제: Python 3, Android NDK(예: `~/AppData/Local/Android/Sdk/ndk/28.1.13356709`), FMOD Android SDK.
+전제: Python 3, Android NDK(예: `~/AppData/Local/Android/Sdk/ndk/28.1.13356709`), FMOD Android SDK(`vendor/fmod-sdk/` 또는 `req_files/fmodstudioapi20313android.tar.gz`).
 
 ```bash
 pip install scons
