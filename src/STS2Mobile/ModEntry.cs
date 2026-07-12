@@ -109,6 +109,13 @@ public static class ModEntry
         ModExceptionAttributionPatches.Apply(_harmony);
         ModGuardAlert.StartTestTriggerWatcher();
 
+        // issue #78: the bundled fmod-gdextension (6.1.0-4.5.0) dereferences a null
+        // Ref when an FMOD event isn't in the bank cache, so any mod asking for an
+        // event whose bank failed to load kills the process. Pre-verify existence at
+        // the GodotObject.Call choke point. Game-independent (patches GodotSharp) and
+        // must be live before any mod runs.
+        FmodEventGuardPatches.Apply(_harmony);
+
         // Game patches require sts2.dll; if missing, fall through to standalone launcher.
         try
         {
@@ -140,6 +147,11 @@ public static class ModEntry
             CombatBackgroundPatches.Apply(_harmony);
             LanMultiplayerPatcher.Apply(_harmony);
             ModLoaderPatches.Apply(_harmony);
+            // issue #78: mod FMOD banks live in pcks on external storage, which the
+            // GDExtension's FMOD file thread can't open (game banks are app-internal).
+            // Copy each loaded mod's bank(s) into app-internal storage and load them
+            // ourselves once every mod pck is mounted.
+            FmodBankPatches.Apply(_harmony);
             LauncherPatches.Apply(_harmony);
             SaveDiagnosticPatches.Apply(_harmony);
 
