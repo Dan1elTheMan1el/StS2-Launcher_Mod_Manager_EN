@@ -194,6 +194,17 @@ public static class FmodBankLoader
         var destFileName = $"{modId}__{fileName}";
         var destUserPath = $"{BanksUserDir}/{destFileName}";
 
+        // The mod already loaded this bank itself (FmodBankRegistry is fed by the
+        // load_bank postfix in FmodEventGuardPatches). Since FMOD 2.03 the
+        // GDExtension reads mod banks straight from res://, so this is the normal
+        // path — re-loading the same bank from a second path only earns FMOD
+        // error 70 ("bank already loaded") and a native push_error.
+        if (FmodBankRegistry.IsLoaded(fileName))
+        {
+            PatchHelper.Log($"[FmodBank] {modId}/{fileName}: SKIP (mod loaded it itself)");
+            return true;
+        }
+
         if (!_handledBankUserPaths.Add(destUserPath))
         {
             // Two mod pcks producing the same dest name (same mod id + bank

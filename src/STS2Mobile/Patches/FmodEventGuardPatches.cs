@@ -99,7 +99,15 @@ public static class FmodEventGuardPatches
                 nameof(CallPrefix),
                 BindingFlags.NonPublic | BindingFlags.Static
             );
-            harmony.Patch(target, prefix: new HarmonyMethod(prefix));
+            var postfix = typeof(FmodEventGuardPatches).GetMethod(
+                nameof(CallPostfix),
+                BindingFlags.NonPublic | BindingFlags.Static
+            );
+            harmony.Patch(
+                target,
+                prefix: new HarmonyMethod(prefix),
+                postfix: new HarmonyMethod(postfix)
+            );
             PatchHelper.Log("Patched GodotObject.Call (Fmod event guard)");
         }
         catch (Exception ex)
@@ -194,6 +202,44 @@ public static class FmodEventGuardPatches
             return true;
         }
     }
+
+    // Postfix on the same Call(): record every bank a mod loads successfully by
+    // itself, so FmodBankLoader's materialize-and-retry fallback doesn't re-load
+    // it from a second path (FMOD rejects that with error 70, "bank already
+    // loaded", which surfaces as a native push_error).
+    private static void CallPostfix(GodotObject __instance, StringName method, Variant[] args, ref Variant __result)
+    {
+        try
+        {
+            if (method is null || args == null || args.Length == 0)
+                return;
+
+            // Lazy, for the same reason as _guardedMethods: constructing a
+            // StringName marshals into native Godot, which must not happen from
+            // Apply()'s gd_mono init context.
+            var loadBank = _loadBankMethod ??= new StringName("load_bank");
+            if (method != loadBank)
+                return;
+
+            if (!IsFmodSingleton(__instance))
+                return;
+
+            // load_bank returns the FmodBank object on success, Nil on failure.
+            if (__result.VariantType == Variant.Type.Nil)
+                return;
+
+            var path = args[0].AsString();
+            if (!string.IsNullOrEmpty(path))
+                Fmod.FmodBankRegistry.RecordLoaded(path);
+        }
+        catch
+        {
+            // Recording is best-effort: worst case the fallback tries a
+            // duplicate load and FMOD refuses it, which is what happened before.
+        }
+    }
+
+    private static StringName _loadBankMethod;
 
     private static Dictionary<StringName, GuardKind> BuildGuardMap() =>
         new()
