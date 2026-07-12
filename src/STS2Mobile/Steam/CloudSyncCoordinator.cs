@@ -175,9 +175,12 @@ public static class CloudSyncCoordinator
     // stays exactly as blocking as it was — this is what turns EndSaveBatch's
     // fire-and-forget enqueue into an honest, awaitable result instead of the
     // previous "returns instantly, always says complete" lie.
+    // progress (issue #64): forwarded to EndSaveBatch — per-file upload
+    // progress from the batch loop, reported on the CloudSaveWriter thread.
     public static async Task<CloudBatchOutcome> ManualPushAllAsync(
         string accountName,
-        string refreshToken
+        string refreshToken,
+        IProgress<(int done, int total)> progress = null
     )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -248,7 +251,7 @@ public static class CloudSyncCoordinator
                 anyLoopFailure = true;
             }
         }
-        cloudStore.EndSaveBatch();
+        cloudStore.EndSaveBatch(progress);
 
         // P0-1: EndSaveBatch only enqueues the batch upload — without waiting
         // for it to drain, "complete" below would still be the same lie the

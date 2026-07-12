@@ -302,6 +302,12 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
     // RPC itself succeeded (that failure is handled separately via PendingUploadBatch).
     public bool LastBatchHadFailures { get; private set; }
 
+    // Issue #64 — see CloudWriteQueue.PendingCount. Meaningful for the
+    // non-batch per-file write path (each file is its own queue action);
+    // during a batch upload the whole batch is ONE queue action, so batch
+    // progress is reported via EndSaveBatch's IProgress instead.
+    public int PendingWriteCount => _writeQueue.PendingCount;
+
     public void BeginSaveBatch()
     {
         lock (_batchLock)
@@ -320,7 +326,14 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
     // per-file upload failure, or an unexpected exception in the loop itself —
     // MUST still call CompleteAppUploadBatchBlocking. The try/finally below is
     // what makes that unconditional.
-    public void EndSaveBatch()
+    // ICloudSaveStore's member — the game interface pins the parameterless
+    // shape, so the progress-reporting variant below is a separate overload.
+    public void EndSaveBatch() => EndSaveBatch(null);
+
+    // progress (issue #64): per-file upload progress, reported from the
+    // CloudSaveWriter background thread — UI handlers must marshal to the
+    // main thread themselves (see ProfileCopyFlow.DeferredProgress).
+    public void EndSaveBatch(IProgress<(int done, int total)> progress)
     {
         List<(string path, byte[] bytes)> files;
         lock (_batchLock)
@@ -364,8 +377,13 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                 // the same retry/commit path as a normal write.
                 PatchHelper.Log($"[Cloud] BeginSaveBatch failed: {ex.Message}");
                 bool allOk = true;
+                int fallbackDone = 0;
                 foreach (var (path, bytes) in files)
+                {
                     allOk &= UploadWithRetry(path, bytes);
+                    fallbackDone++;
+                    progress?.Report((fallbackDone, files.Count));
+                }
                 LastBatchHadFailures = !allOk;
                 return;
             }
@@ -380,10 +398,14 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
             bool anyUploadFailed = false;
             try
             {
+                progress?.Report((0, files.Count));
+                int done = 0;
                 foreach (var (path, bytes) in files)
                 {
                     if (!UploadWithRetry(path, bytes, batchId))
                         anyUploadFailed = true;
+                    done++;
+                    progress?.Report((done, files.Count));
                 }
             }
             catch (Exception ex)

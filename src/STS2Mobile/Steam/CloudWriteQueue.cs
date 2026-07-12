@@ -15,6 +15,13 @@ public class CloudWriteQueue : IDisposable
 
     public int Count => _queue.Count;
 
+    // Issue #64 — queued actions plus the one ProcessLoop is currently
+    // executing (Count alone drops the moment an item is dequeued, which is
+    // exactly when a long upload starts running). Lets the profile-copy
+    // cloud-reflect overlay show a live "remaining files" counter while
+    // Flush drains.
+    public int PendingCount => _queue.Count + (_actionInProgress ? 1 : 0);
+
     public CloudWriteQueue()
     {
         _thread = new Thread(ProcessLoop) { IsBackground = true, Name = "CloudSaveWriter" };

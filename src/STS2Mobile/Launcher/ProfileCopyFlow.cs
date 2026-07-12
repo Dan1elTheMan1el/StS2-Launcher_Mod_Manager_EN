@@ -178,20 +178,40 @@ public static class ProfileCopyFlow
             bool verified;
             try
             {
-                await LauncherPatches.ApplyChosenSideForSlotAsync(
-                    localStore,
-                    cloudStore,
-                    keepLocal: true,
-                    dst.ProfileNumber,
-                    dst.IsModded
-                );
-                verified = await LauncherPatches.FlushAndVerifyForSlotAsync(
-                    localStore,
-                    cloudStore,
-                    keepLocal: true,
-                    dst.ProfileNumber,
-                    dst.IsModded
-                );
+                // Issue #64 UX round 2 — runs off the main thread:
+                // FlushAndVerifyForSlotAsync's Flush is a Thread.Sleep polling
+                // loop (up to 300 s while the write queue drains), and awaited
+                // inline on the Godot context it pins the main thread so the
+                // overlay never repaints (device report: cloud reflect read as
+                // a hard freeze). The main thread stays free to tick the
+                // remaining-files counter below instead.
+                var work = Task.Run(async () =>
+                {
+                    await LauncherPatches.ApplyChosenSideForSlotAsync(
+                        localStore,
+                        cloudStore,
+                        keepLocal: true,
+                        dst.ProfileNumber,
+                        dst.IsModded
+                    );
+                    return await LauncherPatches.FlushAndVerifyForSlotAsync(
+                        localStore,
+                        cloudStore,
+                        keepLocal: true,
+                        dst.ProfileNumber,
+                        dst.IsModded
+                    );
+                });
+                while (!work.IsCompleted)
+                {
+                    // Non-batch path: every file is its own write-queue action,
+                    // so the queue depth IS the remaining-file count.
+                    int pending = cloudStore.PendingWriteCount;
+                    if (pending > 0)
+                        busy3.SetMessage($"클라우드 반영 중... 남은 파일 {pending}개");
+                    await Task.Delay(400);
+                }
+                verified = await work;
             }
             catch (Exception ex)
             {
@@ -350,9 +370,20 @@ public static class ProfileCopyFlow
             CloudBatchOutcome outcome;
             try
             {
+                // Issue #64 UX round 2 — a 120+ file backup made the static
+                // overlay read as a hard freeze during the batch upload
+                // (device report). EndSaveBatch reports per-file progress from
+                // the CloudSaveWriter thread; DeferredProgress marshals each
+                // update onto the main thread before touching the overlay.
+                var progress = new DeferredProgress(p =>
+                {
+                    if (GodotObject.IsInstanceValid(busy3))
+                        busy3.SetMessage($"클라우드 반영 중... {p.done}/{p.total}");
+                });
                 outcome = await CloudSyncCoordinator.ManualPushAllAsync(
                     LauncherPatches.SavedAccountName,
-                    LauncherPatches.SavedRefreshToken
+                    LauncherPatches.SavedRefreshToken,
+                    progress
                 );
             }
             catch (Exception ex)
@@ -420,6 +451,30 @@ public static class ProfileCopyFlow
     // this helper — actually runs on the main thread. Same "defer to the next
     // idle frame on the main thread" mechanism StyledDialog.cs already relies on
     // for its post-layout sizing pass (StyledDialog.cs:76-89).
+    // IProgress<T> whose handler always runs on the Godot main thread.
+    // EndSaveBatch reports from the CloudSaveWriter background thread, and
+    // Progress<T>'s captured-SynchronizationContext marshalling is exactly
+    // the kind of implicit threading this flow already avoids elsewhere
+    // (see RunBlockingAsync) — CallDeferred makes the hop explicit.
+    private sealed class DeferredProgress : IProgress<(int done, int total)>
+    {
+        private readonly Action<(int done, int total)> _onMainThread;
+
+        public DeferredProgress(Action<(int done, int total)> onMainThread) =>
+            _onMainThread = onMainThread;
+
+        public void Report((int done, int total) value)
+        {
+            var handler = _onMainThread;
+            Callable
+                .From(() =>
+                {
+                    handler(value);
+                })
+                .CallDeferred();
+        }
+    }
+
     private static Task<T> RunBlockingAsync<T>(Func<T> work)
     {
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
