@@ -29,18 +29,14 @@ public static class ModGuardAlert
 
     private const string TestTriggerFile = AppPaths.ExternalRoot + "/.modguard_test_alert";
 
-    // alwaysShow (issue #76): bypasses the launcher's Debug toggle gate. Set for
-    // crash-grade exceptions (AppDomain unhandled — the process is going down)
-    // and for the QA test trigger; a caught-and-logged exception leaves it false
-    // so a quiet (Debug: OFF) session stays quiet.
-    public static void ShowForMod(string modName, string exceptionType, bool alwaysShow = false)
+    public static void ShowForMod(string modName, string exceptionType)
     {
         lock (_lock)
         {
             if (!_alertedMods.Add(modName))
                 return;
         }
-        Enqueue(modName, exceptionType, alwaysShow);
+        Enqueue(modName, exceptionType);
     }
 
     public static void StartTestTriggerWatcher()
@@ -80,10 +76,11 @@ public static class ModGuardAlert
             var mod = parts.Length > 0 && parts[0].Length > 0 ? parts[0] : "TestMod";
             var type = parts.Length > 1 && parts[1].Length > 0 ? parts[1] : "TestException";
             PatchHelper.Log($"[ModGuard] Test alert triggered via file (mod='{mod}')");
-            // alwaysShow: an explicit QA trigger must render regardless of the
-            // Debug toggle, or the harness can't test the dialog on a normal
-            // (Debug: OFF) device.
-            Enqueue(mod, type, alwaysShow: true); // bypasses once-per-mod dedup on purpose
+            // Honors the Debug gate like any real attribution (issue #76): the
+            // dialog only exists in Debug: ON sessions now, so a test that
+            // bypassed the gate would be exercising a state that can't occur in
+            // production. QA: turn Debug ON in the launcher first.
+            Enqueue(mod, type); // bypasses once-per-mod dedup on purpose
         }
         catch (Exception ex)
         {
@@ -93,11 +90,11 @@ public static class ModGuardAlert
 
     // May be called from any thread (exception observers, timer) — marshal to
     // the main thread via Godot's deferred queue.
-    private static void Enqueue(string modName, string exceptionType, bool alwaysShow)
+    private static void Enqueue(string modName, string exceptionType)
     {
         try
         {
-            Callable.From(() => ShowOnMainThread(modName, exceptionType, alwaysShow)).CallDeferred();
+            Callable.From(() => ShowOnMainThread(modName, exceptionType)).CallDeferred();
         }
         catch (Exception ex)
         {
@@ -105,7 +102,7 @@ public static class ModGuardAlert
         }
     }
 
-    private static void ShowOnMainThread(string modName, string exceptionType, bool alwaysShow)
+    private static void ShowOnMainThread(string modName, string exceptionType)
     {
         try
         {
@@ -120,19 +117,18 @@ public static class ModGuardAlert
                 }
             }
 
-            // issue #76 — the alert is opt-in behind the launcher's Debug toggle.
-            // The common attribution is a mod built against an older game build
-            // throwing MissingMethodException while the game keeps running fine
-            // (user report: outdated local skin mods) — nagging about a mod the
-            // user knowingly accepts is pure noise. The log line was already
-            // written, so nothing is lost for diagnosis; crash-grade exceptions
-            // pass alwaysShow and are never suppressed.
+            // issue #76 — the alert is entirely opt-in behind the launcher's
+            // Debug toggle. Debug: OFF (the default) means this dialog NEVER
+            // shows, crash-grade or not: owner's rule, for users knowingly
+            // running long-outdated mods ("살짝 깨져도 걍 쓰는" 모드) who don't want
+            // to be told about it. Attribution logging is untouched, so a
+            // Debug: ON session (or a pulled logcat) still has everything.
             //
             // Checked HERE rather than in the observer: DebugLogger.IsEnabled()
             // is a JNI call into GodotApp, and the observer runs on whatever
             // thread threw. This path is the deferred main thread, where Godot/
             // Java calls are safe.
-            if (!alwaysShow && !DebugLogger.IsEnabled())
+            if (!DebugLogger.IsEnabled())
             {
                 PatchHelper.Log(
                     $"[ModGuard] Alert suppressed (Debug: OFF) for mod '{modName}' "
@@ -194,7 +190,12 @@ public static class ModGuardAlert
                     $"'{modName}' 모드에서 오류가 발생했습니다.\n"
                     + $"({exceptionType})\n\n"
                     + "게임은 계속 진행할 수 있지만, 문제가 반복되면\n"
-                    + "Mod Hub에서 해당 모드를 비활성화하세요.",
+                    + "Mod Hub에서 해당 모드를 비활성화하세요.\n\n"
+                    // issue #76 — the dialog only appears in Debug: ON sessions,
+                    // so it must say how to turn itself off. Users knowingly
+                    // running outdated mods shouldn't have to hunt for it.
+                    + "이 알림을 보고 싶지 않으면\n"
+                    + "런처 화면 우측 상단의 Debug 토글을 OFF 하세요.",
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 CustomMinimumSize = new Vector2(680, 0),
             };

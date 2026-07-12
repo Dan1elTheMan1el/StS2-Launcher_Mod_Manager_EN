@@ -96,14 +96,11 @@ public static class ModExceptionAttributionPatches
                     + $"{e.GetType().Name}: {e.Message}"
             );
 
-            // issue #76 — only the "unhandled" channel is crash-grade: it comes
-            // from AppDomain.UnhandledException, i.e. the process is going down.
-            // The "godot" channel is exceptions the game itself CAUGHT and
-            // logged — it survived, and the usual cause is a mod compiled
-            // against an older game build (MissingMethodException from an
-            // outdated skin mod, game plays fine). Those alert only when the
-            // user has Debug ON; the log line above is written either way.
-            ModGuardAlert.ShowForMod(mod, e.GetType().Name, alwaysShow: channel == "unhandled");
+            // issue #76 — the alert itself is gated on the launcher's Debug
+            // toggle inside ModGuardAlert (Debug: OFF → never shown, crash-grade
+            // included). Attribution and the log line above are unconditional,
+            // so nothing is lost for diagnosis either way.
+            ModGuardAlert.ShowForMod(mod, e.GetType().Name);
         }
         catch { }
     }
