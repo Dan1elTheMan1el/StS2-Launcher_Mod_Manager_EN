@@ -187,7 +187,35 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
     {
         var canonPath = CloudFileCache.CanonicalizePath(path);
         _cache.Remove(canonPath);
+        EnqueueCloudRemove(canonPath, "Delete");
+    }
 
+    // issue #81 — 게임의 클라우드 히스토리 캡을 모바일에서 실제로 작동시킨다.
+    // MegaCrit.Sts2.Core.Saves.Managers.RunHistorySaveManager(maxCloudFileCount=100)는
+    // run 을 쓰기 전 CloudSaveStore.ForgetFilesInDirectoryBeforeWritingIfNecessary(.., 5MB, 100)
+    // 를 호출해 오래된 run 을 CloudStore.ForgetFile 로 클라우드에서 덜어낸다. 기존 구현은
+    //   public void ForgetFile(string p) => _cache.ForgetFile(p);   // 캐시 Persisted=false 만
+    // 즉 실제 Steam 클라우드에는 손대지 않는 no-op 이었다 → 캡이 안 먹혀 클라우드 히스토리가
+    // 무한 누적 → Steam 파일수 쿼터 초과 → ClientBeginFileUpload=LimitExceeded 로 신규
+    // 세이브(progress 포함) 업로드 전멸(issue #81). PC(진짜 Steam)는 ForgetFile=FileForget 이라
+    // 실제로 덜어내 캡이 먹힌다. 여기서 실제 클라우드 제거를 수행해 PC 와 동작을 일치시킨다.
+    //
+    // 로컬은 이 CloudStore 가 아니라 별도 GodotFileIo 가 관리하므로 여기서 미접촉 —
+    // 게임이 의도한 "클라우드만 캡, 로컬 run 은 보존" 과 일치한다. (사용자 결정: newest-100
+    // 초과 오래된 run 은 타기기(PC) 로컬로의 삭제 전파도 허용.) 내부 업로드-실패 마킹은
+    // 여전히 _cache.ForgetFile 을 직접 호출하므로 이 공개 메서드 변경의 영향을 받지 않는다.
+    public void ForgetFile(string path)
+    {
+        var canonPath = CloudFileCache.CanonicalizePath(path);
+        _cache.Remove(canonPath);
+        EnqueueCloudRemove(canonPath, "Forget");
+    }
+
+    // 클라우드에서만 파일을 제거(ClientDeleteFile). Delete/Forget 공용. 직렬 _writeQueue 로
+    // enqueue 되므로 대량(제보자 백로그) 처리도 1건씩 순차 실행되어 TooManyPending 스로틀을
+    // 자연히 피한다(동시 in-flight 1건).
+    private void EnqueueCloudRemove(string canonPath, string reason)
+    {
         _writeQueue.Enqueue(() =>
         {
             for (int attempt = 0; attempt < 3; attempt++)
@@ -213,12 +241,12 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
                 catch (InvalidOperationException ex)
                     when (ex.Message.Contains("TooManyPending") && attempt < 2)
                 {
-                    PatchHelper.Log($"[Cloud] Delete throttled for {canonPath}, retrying...");
+                    PatchHelper.Log($"[Cloud] {reason} throttled for {canonPath}, retrying...");
                     Thread.Sleep(1000);
                 }
                 catch (Exception ex)
                 {
-                    PatchHelper.Log($"[Cloud] Delete failed for {canonPath}: {ex.Message}");
+                    PatchHelper.Log($"[Cloud] {reason} failed for {canonPath}: {ex.Message}");
                     break;
                 }
             }
@@ -283,7 +311,7 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
     public Task<bool> WaitForCacheReadyAsync(int timeoutMs = 15_000) =>
         _cache.WaitForLoadAsync(timeoutMs);
 
-    public void ForgetFile(string path) => _cache.ForgetFile(path);
+    // ForgetFile 은 위 DeleteFile 근처에 실구현(issue #81) — 여기서는 제거됨.
 
     public bool IsFilePersisted(string path) => _cache.IsFilePersisted(path);
 
