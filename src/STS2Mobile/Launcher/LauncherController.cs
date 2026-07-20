@@ -1113,11 +1113,22 @@ public class LauncherController
                 _view.AppendLog("Pulling cloud saves to local...");
                 Task.Run(async () =>
                 {
+                    // issue #81 — push 와 동일하게 단계/카운트를 상태줄에 표시(프리징 오해 방지).
+                    string phase = "클라우드 동기화 중";
+                    var progress = new MainThreadProgress(p =>
+                        _runOnMainThread(() => _view.SetStatus($"{phase}... {p.done}/{p.total}"))
+                    );
                     try
                     {
                         var outcome = await CloudSyncCoordinator.ManualPullAllAsync(
                             LauncherPatches.SavedAccountName,
-                            LauncherPatches.SavedRefreshToken
+                            LauncherPatches.SavedRefreshToken,
+                            progress,
+                            ph =>
+                            {
+                                phase = ph;
+                                _runOnMainThread(() => _view.SetStatus(ph + "..."));
+                            }
                         );
                         _runOnMainThread(() =>
                             _view.AppendLog(
@@ -1139,6 +1150,7 @@ public class LauncherController
                     {
                         _runOnMainThread(() =>
                         {
+                            _view.SetStatus("");
                             _view.SetCloudOpBusy(false);
                             _cloudOpInProgress = false;
                         });

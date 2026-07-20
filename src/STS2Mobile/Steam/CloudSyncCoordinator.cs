@@ -356,14 +356,14 @@ public static class CloudSyncCoordinator
         return outcome;
     }
 
-    // Unlike Push, Pull has no batch/write-queue involved — every download and
-    // local write below is already awaited in-line, so by the time this
-    // method returns everything has genuinely finished (no TimedOut case).
-    // The only honesty gap was the return value never reflecting per-file
-    // failures — fixed by tracking anyFailure below.
+    // 다운로드/로컬 쓰기는 인라인 await 이라 반환 시 완료가 보장된다(TimedOut 없음). issue #81:
+    // 클라우드 히스토리 트림만 쓰기 큐를 쓰며, 다운로드 시작 전에 드레인까지 대기한다.
+    // progress/onPhase (issue #81): push 와 동일 규약. 기본 null 이라 기존 호출부 무영향.
     public static async Task<CloudBatchOutcome> ManualPullAllAsync(
         string accountName,
-        string refreshToken
+        string refreshToken,
+        IProgress<(int done, int total)> progress = null,
+        Action<string> onPhase = null
     )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -371,15 +371,41 @@ public static class CloudSyncCoordinator
             SteamKit2CloudSaveStore.Instance
             ?? new SteamKit2CloudSaveStore(accountName, refreshToken);
 
+        // 트림이 클라우드 전체를 보고 판단하도록 캐시 로드를 먼저 보장(push 와 동일).
+        await cloudStore.WaitForCacheReadyAsync(15_000).ConfigureAwait(false);
+
+        // issue #81 — pull 로도 클라우드 히스토리를 100/5MB 로 트림해 백로그를 치유한다
+        // (어느 클라우드 동작으로든 자가 치유되도록 push/pull 양쪽에 둔다). 트림은 클라우드
+        // 서버·캐시에서만 제거(로컬 미접촉). 아래 다운로드 목록은 트림 후 캐시 기준이라
+        // 방금 지운 오래된 run 을 다시 받으려 하지 않는다.
+        int trimmed = 0;
+        try
+        {
+            trimmed = TrimCloudHistoryToCap(cloudStore);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Cloud] Pull: history trim failed (continuing): {ex.Message}");
+        }
+        if (trimmed > 0)
+        {
+            onPhase?.Invoke("클라우드 정리 중");
+            DrainQueueWithProgress(cloudStore, trimmed, progress, capMs: 900_000);
+        }
+
+        onPhase?.Invoke("클라우드 받는 중");
         var paths = GetSaveFilePaths(cloudStore);
         PatchHelper.Log($"[Cloud] Pull: starting ({paths.Count} files)");
 
         int downloaded = 0;
         int skipped = 0;
         int deletedLocal = 0;
+        int done = 0;
         bool anyFailure = false;
         foreach (var path in paths)
         {
+            done++;
+            progress?.Report((done, paths.Count));
             try
             {
                 if (!cloudStore.FileExists(path))
@@ -396,10 +422,14 @@ public static class CloudSyncCoordinator
                     }
                     continue;
                 }
-                // issue #81 계측 (B): 이 파일을 실제로 받을 필요가 있었나?
-                // (로컬이 이미 SHA 동일이면 WOULD-SKIP). 판정만 로깅하고 아래
-                // 다운로드는 기존대로 무조건 수행 — 동작 불변.
-                CloudDiag.LogDownloadNeed(localStore, cloudStore, path);
+                // issue #81 — 불변 history run 을 로컬이 이미 갖고 있으면 다운로드 스킵.
+                // 파일명=고유 run id 완결 스냅샷이라 내용 동일 보장 → 매번 재다운로드하던
+                // 대량 순차 왕복(느린 pull) 제거. (mutable 파일은 종전대로 다운로드.)
+                if (IsHistoryRunFile(path) && localStore.FileExists(path))
+                {
+                    skipped++;
+                    continue;
+                }
                 PatchHelper.Log($"[Cloud] Pull: downloading {path}");
                 var pullTime = cloudStore.GetLastModifiedTime(path);
                 string content = await cloudStore.ReadFileAsync(path);
