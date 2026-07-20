@@ -95,8 +95,12 @@ public static class CloudSyncCoordinator
 
             if (cloudExists && localExists)
             {
-                // issue #81 계측 (B): 다운로드 전에 SHA 로 동일성 판정 로깅(다운로드 없음).
-                // 아래 ReadFileAsync 다운로드는 기존대로 수행 — 동작 불변.
+                // issue #81 — 불변 history run 이 양쪽에 존재하면 내용 동일(파일명=고유 run id)
+                // 이므로 다운로드·비교 없이 스킵한다. 게임 클라우드 동기화가 history 수백 개를
+                // 매번 개별 다운로드(ClientFileDownload+HTTP)하던 대량 순차 왕복을 제거 — 느린
+                // 동기화의 주원인 해소.
+                if (IsHistoryRunFile(path))
+                    return;
                 CloudDiag.LogDownloadNeed(local, cloud, path);
                 string localContent = local.ReadFile(path);
                 string cloudContent = await cloud.ReadFileAsync(path);
@@ -197,10 +201,14 @@ public static class CloudSyncCoordinator
     // previous "returns instantly, always says complete" lie.
     // progress (issue #64): forwarded to EndSaveBatch — per-file upload
     // progress from the batch loop, reported on the CloudSaveWriter thread.
+    // onPhase (issue #81): 진행 단계 문구를 UI 로 알린다("클라우드 정리 중"/"클라우드 반영 중").
+    // progress 의 (done,total) 과 조합해 프리징 오해 없이 세부 진행을 보여준다. 기본 null 이라
+    // 기존 호출부(ProfileCopyFlow)는 영향 없음.
     public static async Task<CloudBatchOutcome> ManualPushAllAsync(
         string accountName,
         string refreshToken,
-        IProgress<(int done, int total)> progress = null
+        IProgress<(int done, int total)> progress = null,
+        Action<string> onPhase = null
     )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -238,15 +246,24 @@ public static class CloudSyncCoordinator
         // 백로그(제보자 ~1000개)로 쿼터가 꽉 차 신규 업로드가 LimitExceeded 로 전멸하던
         // 상태를 여기서 자가 치유한다. 트림 삭제는 직렬 _writeQueue 에 먼저 쌓이고 아래
         // 배치 업로드는 그 뒤에 쌓이므로(FIFO), 삭제가 완료돼 쿼터가 빈 뒤 업로드가 시작된다.
+        // 대량 삭제(제보자 ~900)는 오래 걸리므로, 여기서 삭제가 실제로 드레인될 때까지
+        // 진행률을 폴링 보고하며 대기한다(무진행 프리징 오해 방지 + 업로드 전 쿼터 확정).
+        int trimmed = 0;
         try
         {
-            TrimCloudHistoryToCap(cloudStore);
+            trimmed = TrimCloudHistoryToCap(cloudStore);
         }
         catch (Exception ex)
         {
             PatchHelper.Log($"[Cloud] Push: history trim failed (continuing): {ex.Message}");
         }
+        if (trimmed > 0)
+        {
+            onPhase?.Invoke("클라우드 정리 중");
+            DrainQueueWithProgress(cloudStore, trimmed, progress, capMs: 900_000);
+        }
 
+        onPhase?.Invoke("클라우드 반영 중");
         cloudStore.BeginSaveBatch();
         int count = 0;
         int deletedCloud = 0;
@@ -265,6 +282,13 @@ public static class CloudSyncCoordinator
                     }
                     continue;
                 }
+
+                // issue #81 — 불변 history run 이 이미 클라우드에 있으면 read/압축/RPC 없이
+                // 스킵한다. 파일명=고유 run id 인 완결 스냅샷이라 양쪽 존재 시 내용 동일 보장.
+                // 종전엔 파일마다 read+압축 후 ClientBeginFileUpload 로 DuplicateRequest 를
+                // 받아야 "already up to date" 판정이 나서 수백 파일 대량 왕복이 느렸다.
+                if (IsHistoryRunFile(path) && cloudStore.FileExists(path))
+                    continue;
 
                 // P0-2 — a recovered-session progress.save push gets a
                 // one-time user confirmation before it's allowed to overwrite
@@ -303,7 +327,12 @@ public static class CloudSyncCoordinator
         // upload plus any mirror-deletes queued above) finishes or the budget
         // runs out; only once it reports drained can LastBatchHadFailures be
         // trusted (see SteamKit2CloudSaveStore.Flush / EndSaveBatch).
-        bool drained = cloudStore.Flush(timeoutMs: 120_000);
+        //
+        // issue #81 — 상한을 120초 → 15분으로. 백로그 트림+대량 업로드가 120초를 넘기면
+        // 작업이 백그라운드로 계속 도는데도 UI 가 조기 해제(프리즈 풀림)돼 실패처럼 보였다.
+        // 삭제/업로드는 각기 3회 재시도 후 실패-스킵하므로 큐는 유한 시간에 반드시 비워진다
+        // (무한 대기 아님). EndSaveBatch 의 per-file 진행률이 대기 동안 UI 로 계속 흐른다.
+        bool drained = cloudStore.Flush(timeoutMs: 900_000);
 
         CloudBatchOutcome outcome;
         if (!drained)
@@ -496,6 +525,28 @@ public static class CloudSyncCoordinator
             oldestIdx--;
         }
         return deleted;
+    }
+
+    // issue #81 — 쓰기 큐가 비워질 때까지 진행률을 폴링 보고하며 대기한다(무진행 프리징
+    // 오해 방지). total = 대기 시작 시점의 큐 항목 수(트림 삭제 개수). 삭제는 성공/실패
+    // 모두 유한 재시도 후 종료되므로 PendingWriteCount 는 반드시 0 에 도달한다. capMs 는
+    // 무한 대기를 막는 안전 상한(정상 경로에선 도달 전에 드레인됨).
+    private static void DrainQueueWithProgress(
+        SteamKit2CloudSaveStore store,
+        int total,
+        IProgress<(int done, int total)> progress,
+        int capMs
+    )
+    {
+        long deadline = Environment.TickCount64 + capMs;
+        while (store.PendingWriteCount > 0 && Environment.TickCount64 < deadline)
+        {
+            int done = Math.Max(0, total - store.PendingWriteCount);
+            progress?.Report((done, total));
+            System.Threading.Thread.Sleep(250);
+        }
+        if (store.PendingWriteCount == 0)
+            progress?.Report((total, total));
     }
 
     public static List<string> GetSaveFilePaths(ISaveStore store)

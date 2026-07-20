@@ -1019,6 +1019,17 @@ public class LauncherController
         LauncherPatches.CloudSyncEnabled = pressed;
     }
 
+    // issue #81 — IProgress<T> 최소 구현. Report 는 배경 스레드(드레인 폴링/CloudSaveWriter)
+    // 에서 호출되므로, 콜백 내부에서 _runOnMainThread 로 메인스레드 마샬링을 하도록 넘긴다.
+    private sealed class MainThreadProgress : IProgress<(int done, int total)>
+    {
+        private readonly Action<(int done, int total)> _report;
+
+        public MainThreadProgress(Action<(int done, int total)> report) => _report = report;
+
+        public void Report((int done, int total) value) => _report(value);
+    }
+
     private void OnCloudPushPressed()
     {
         if (BlockIfTokenExpired())
@@ -1035,11 +1046,24 @@ public class LauncherController
                 _view.AppendLog("Pushing local saves to cloud...");
                 Task.Run(async () =>
                 {
+                    // issue #81 — 진행 단계(정리/반영)와 파일 카운트를 상태줄에 표시해
+                    // 대량 정리·업로드 중에도 프리징으로 오해받지 않게 한다. onPhase 가 단계
+                    // 문구를, progress 가 done/total 을 갱신한다(둘 다 메인스레드로 마샬).
+                    string phase = "클라우드 동기화 중";
+                    var progress = new MainThreadProgress(p =>
+                        _runOnMainThread(() => _view.SetStatus($"{phase}... {p.done}/{p.total}"))
+                    );
                     try
                     {
                         var outcome = await CloudSyncCoordinator.ManualPushAllAsync(
                             LauncherPatches.SavedAccountName,
-                            LauncherPatches.SavedRefreshToken
+                            LauncherPatches.SavedRefreshToken,
+                            progress,
+                            ph =>
+                            {
+                                phase = ph;
+                                _runOnMainThread(() => _view.SetStatus(ph + "..."));
+                            }
                         );
                         _runOnMainThread(() =>
                             _view.AppendLog(
@@ -1063,6 +1087,7 @@ public class LauncherController
                     {
                         _runOnMainThread(() =>
                         {
+                            _view.SetStatus("");
                             _view.SetCloudOpBusy(false);
                             _cloudOpInProgress = false;
                         });
