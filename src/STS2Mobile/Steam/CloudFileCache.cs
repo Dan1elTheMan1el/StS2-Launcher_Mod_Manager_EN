@@ -61,6 +61,14 @@ public class CloudFileCache
         return _files.TryGetValue(CanonicalizePath(path), out var info) ? info.Size : 0;
     }
 
+    // issue #81 계측: enumerate 가 준 file_sha(raw 내용 SHA1 hex). 미로드/미존재/
+    // 로컬-write 로만 채워진 항목은 null. 진단 전용.
+    public string GetSha(string path)
+    {
+        EnsureLoaded();
+        return _files.TryGetValue(CanonicalizePath(path), out var info) ? info.Sha : null;
+    }
+
     public bool HasCloudFiles()
     {
         EnsureLoaded();
@@ -244,6 +252,11 @@ public class CloudFileCache
         uint startIndex = 0;
         const uint pageSize = 500;
 
+        // issue #81 계측: enumerate 원본 필드(raw size / compressed size / sha / ts)를
+        // 세션 1회 덤프하기 위한 수집기. 캐시는 size/ts/sha 만 보관하므로
+        // compressed_file_size 는 여기서만 확보 가능.
+        var diagDump = new List<(string, uint, uint, string, ulong)>();
+
         while (true)
         {
             var result = _connection
@@ -268,7 +281,17 @@ public class CloudFileCache
                 {
                     Size = (int)file.file_size,
                     Timestamp = DateTimeOffset.FromUnixTimeSeconds((long)file.timestamp),
+                    Sha = file.file_sha, // issue #81: 다운로드 없는 동일성 판정용
                 };
+                diagDump.Add(
+                    (
+                        file.filename,
+                        file.file_size,
+                        file.compressed_file_size,
+                        file.file_sha,
+                        file.timestamp
+                    )
+                );
             }
 
             startIndex += (uint)result.files.Count;
@@ -277,6 +300,7 @@ public class CloudFileCache
         }
 
         PatchHelper.Log($"[Cloud] Enumerated {_files.Count} cloud files");
+        CloudDiag.DumpEnumerate(diagDump); // issue #81 계측 (세션 1회)
 
         // P0-1 — this is the first confirmed-successful cloud RPC of the
         // session (connection is up, logged on, and just proved it works), so
@@ -337,6 +361,11 @@ public class CloudFileCache
     {
         public int Size;
         public DateTimeOffset Timestamp;
+
+        // issue #81 계측/최적화 후보: enumerate 의 file_sha(raw 내용 SHA1 hex).
+        // 로컬 SHA1 과 비교하면 다운로드 없이 동일성 판정 가능. 로컬 write 경로의
+        // Set() 는 이 값을 채우지 않으므로 null 일 수 있음(진단은 null 을 허용).
+        public string Sha;
         public volatile bool Persisted = true;
     }
 }

@@ -571,6 +571,23 @@ public static class CloudSyncDecisions
             profileDiffers = true;
         }
 
+        // issue #81 계측 (C): 이 슬롯의 differs 판정과 함께 양쪽 size/sha 실측.
+        // sha 동일한데 differs=true 면 false-conflict 확정 + 트리거 크기 가시화.
+        // 로컬 읽기만 하고 클라우드 다운로드는 없음 — 동작 불변.
+        CloudDiag.LogSlot(
+            local,
+            cloud,
+            profile,
+            modded,
+            path,
+            localSize,
+            cloudSize,
+            runPath,
+            localRunSize,
+            cloudRunSize,
+            profileDiffers
+        );
+
         SaveProgressSummary localSummary = null;
         SaveProgressSummary cloudSummary = null;
 

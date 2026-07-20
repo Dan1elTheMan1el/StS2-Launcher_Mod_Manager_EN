@@ -90,6 +90,9 @@ public static class CloudSyncCoordinator
 
             if (cloudExists && localExists)
             {
+                // issue #81 계측 (B): 다운로드 전에 SHA 로 동일성 판정 로깅(다운로드 없음).
+                // 아래 ReadFileAsync 다운로드는 기존대로 수행 — 동작 불변.
+                CloudDiag.LogDownloadNeed(local, cloud, path);
                 string localContent = local.ReadFile(path);
                 string cloudContent = await cloud.ReadFileAsync(path);
 
@@ -202,6 +205,17 @@ public static class CloudSyncCoordinator
 
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
+
+        // issue #81 계측 (A): 클라우드에만 존재하는 stale history .run 을 개수·목록만
+        // 로깅(실삭제 없음). 이 push 는 아래 로직대로 그대로 진행됨 — 동작 불변.
+        try
+        {
+            CloudDiag.LogPruneCandidates(localStore, cloudStore);
+        }
+        catch (Exception ex)
+        {
+            CloudDiag.Log($"prune-candidate scan failed: {ex.Message}");
+        }
 
         cloudStore.BeginSaveBatch();
         int count = 0;
@@ -323,6 +337,10 @@ public static class CloudSyncCoordinator
                     }
                     continue;
                 }
+                // issue #81 계측 (B): 이 파일을 실제로 받을 필요가 있었나?
+                // (로컬이 이미 SHA 동일이면 WOULD-SKIP). 판정만 로깅하고 아래
+                // 다운로드는 기존대로 무조건 수행 — 동작 불변.
+                CloudDiag.LogDownloadNeed(localStore, cloudStore, path);
                 PatchHelper.Log($"[Cloud] Pull: downloading {path}");
                 var pullTime = cloudStore.GetLastModifiedTime(path);
                 string content = await cloudStore.ReadFileAsync(path);

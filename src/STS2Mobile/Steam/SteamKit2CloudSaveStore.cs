@@ -258,6 +258,9 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     public int GetFileSize(string path) => _cache.GetFileSize(path);
 
+    // issue #81 계측: enumerate 의 file_sha(다운로드 없는 동일성 판정용). 진단 전용.
+    public string GetFileSha(string path) => _cache.GetSha(path);
+
     public void SetLastModifiedTime(string path, DateTimeOffset time) =>
         throw new NotImplementedException();
 
