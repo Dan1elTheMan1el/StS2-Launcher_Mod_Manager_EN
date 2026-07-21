@@ -4,7 +4,7 @@
 
 An Android launcher + mod manager for **Slay the Spire 2**, built on a custom Godot 4.5.1 engine with .NET/Mono and Harmony runtime patching. Log in with Steam, download the game, browse the Steam Workshop, and play with mods — all on your phone.
 
-**Current release: [v0.3.34](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases/latest)** (versionCode 314)
+**Current release: [v0.4.1](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases/latest)** (versionCode 314)
 
 > **📖 사용설명서 (한국어)** — 설치부터 모드/세이브 관리까지 스크린샷과 함께 설명하는 단계별 가이드: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**
 
