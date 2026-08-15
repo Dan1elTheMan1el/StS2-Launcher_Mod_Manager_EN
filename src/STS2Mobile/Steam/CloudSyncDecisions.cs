@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using MegaCrit.Sts2.Core.Saves;
 
@@ -618,10 +619,15 @@ public static class CloudSyncDecisions
         try
         {
             // ISaveStore doesn't expose a size primitive, but reading is cheap
-            // for save files which are <1MB. Used only to decide whether a
-            // file is non-empty.
+            // for save files which are <1MB. The result is compared against
+            // cloud.GetFileSize(), which is the UTF-8 byte size Steam reported
+            // at enumerate — so this must count UTF-8 bytes, not chars. With
+            // string.Length, any non-ASCII content (Korean run/deck names)
+            // makes the local count permanently smaller than the byte size of
+            // the launcher's own upload of the very same file, and every boot
+            // flags the slot as a conflict (issue #84: constant +22 offset).
             var content = store.ReadFile(path);
-            return content?.Length ?? 0;
+            return content == null ? 0 : Encoding.UTF8.GetByteCount(content);
         }
         catch
         {
