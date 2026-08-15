@@ -61,6 +61,14 @@ public class CloudFileCache
         return _files.TryGetValue(CanonicalizePath(path), out var info) ? info.Size : 0;
     }
 
+    // issue #81 계측: enumerate 가 준 file_sha(raw 내용 SHA1 hex). 미로드/미존재/
+    // 로컬-write 로만 채워진 항목은 null. 진단 전용.
+    public string GetSha(string path)
+    {
+        EnsureLoaded();
+        return _files.TryGetValue(CanonicalizePath(path), out var info) ? info.Sha : null;
+    }
+
     public bool HasCloudFiles()
     {
         EnsureLoaded();
@@ -268,6 +276,7 @@ public class CloudFileCache
                 {
                     Size = (int)file.file_size,
                     Timestamp = DateTimeOffset.FromUnixTimeSeconds((long)file.timestamp),
+                    Sha = file.file_sha, // issue #81: 다운로드 없는 동일성 판정용
                 };
             }
 
@@ -337,6 +346,11 @@ public class CloudFileCache
     {
         public int Size;
         public DateTimeOffset Timestamp;
+
+        // issue #81 계측/최적화 후보: enumerate 의 file_sha(raw 내용 SHA1 hex).
+        // 로컬 SHA1 과 비교하면 다운로드 없이 동일성 판정 가능. 로컬 write 경로의
+        // Set() 는 이 값을 채우지 않으므로 null 일 수 있음(진단은 null 을 허용).
+        public string Sha;
         public volatile bool Persisted = true;
     }
 }

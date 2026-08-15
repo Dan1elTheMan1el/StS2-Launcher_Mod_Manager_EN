@@ -34,6 +34,11 @@ public static class CloudSyncCoordinator
 {
     private const int HistoryFileLimit = 100;
 
+    // issue #81 — 게임의 클라우드 히스토리 캡 한도(MegaCrit.Sts2.Core.Saves.Managers.
+    // RunHistorySaveManager: maxCloudFileCount=100, byteLimit=5MB). 런처-측 트림도 동일 한도.
+    private const int CloudHistoryFileCap = 100;
+    private const long CloudHistoryByteCap = 5L * 1024 * 1024;
+
     public static async Task PushFileAsync(ISaveStore local, ICloudSaveStore cloud, string path)
     {
         if (!local.FileExists(path))
@@ -90,6 +95,12 @@ public static class CloudSyncCoordinator
 
             if (cloudExists && localExists)
             {
+                // issue #81 — 불변 history run 이 양쪽에 존재하면 내용 동일(파일명=고유 run id)
+                // 이므로 다운로드·비교 없이 스킵한다. 게임 클라우드 동기화가 history 수백 개를
+                // 매번 개별 다운로드(ClientFileDownload+HTTP)하던 대량 순차 왕복을 제거 — 느린
+                // 동기화의 주원인 해소.
+                if (IsHistoryRunFile(path))
+                    return;
                 string localContent = local.ReadFile(path);
                 string cloudContent = await cloud.ReadFileAsync(path);
 
@@ -157,6 +168,18 @@ public static class CloudSyncCoordinator
             }
             else if (localExists)
             {
+                // issue #81 — 히스토리 run 은 완료 시 게임 write 경로(RunHistorySaveManager →
+                // WriteFile)가 클라우드에 올린다. auto-sync 가 local-only run 을 다시 push 하면,
+                // 캡으로 forget/trim 한 오래된 run 이 되살아나 클라우드 히스토리 캡이 무효화된다
+                // (ping-pong). 따라서 local-only 히스토리 run 은 push 하지 않는다. progress/
+                // current_run/prefs 등 mutable 파일은 종전대로 push.
+                if (IsHistoryRunFile(path))
+                {
+                    PatchHelper.Log(
+                        $"[Cloud] Sync: skip push for local-only history run {path} (cloud cap)"
+                    );
+                    return;
+                }
                 Issue7Diagnostics.LogCurrentRunSyncDetail(path, null, null, "LocalOnly→Push");
                 await PushFileAsync(local, cloud, path);
             }
@@ -177,10 +200,14 @@ public static class CloudSyncCoordinator
     // previous "returns instantly, always says complete" lie.
     // progress (issue #64): forwarded to EndSaveBatch — per-file upload
     // progress from the batch loop, reported on the CloudSaveWriter thread.
+    // onPhase (issue #81): 진행 단계 문구를 UI 로 알린다("클라우드 정리 중"/"클라우드 반영 중").
+    // progress 의 (done,total) 과 조합해 프리징 오해 없이 세부 진행을 보여준다. 기본 null 이라
+    // 기존 호출부(ProfileCopyFlow)는 영향 없음.
     public static async Task<CloudBatchOutcome> ManualPushAllAsync(
         string accountName,
         string refreshToken,
-        IProgress<(int done, int total)> progress = null
+        IProgress<(int done, int total)> progress = null,
+        Action<string> onPhase = null
     )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -203,6 +230,28 @@ public static class CloudSyncCoordinator
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
 
+        // issue #81 — 업로드 전에 클라우드 히스토리를 100/5MB 로 트림해 쿼터를 확보한다.
+        // 백로그(제보자 ~1000개)로 쿼터가 꽉 차 신규 업로드가 LimitExceeded 로 전멸하던
+        // 상태를 여기서 자가 치유한다. 트림 삭제는 직렬 _writeQueue 에 먼저 쌓이고 아래
+        // 배치 업로드는 그 뒤에 쌓이므로(FIFO), 삭제가 완료돼 쿼터가 빈 뒤 업로드가 시작된다.
+        // 대량 삭제(제보자 ~900)는 오래 걸리므로, 여기서 삭제가 실제로 드레인될 때까지
+        // 진행률을 폴링 보고하며 대기한다(무진행 프리징 오해 방지 + 업로드 전 쿼터 확정).
+        int trimmed = 0;
+        try
+        {
+            trimmed = TrimCloudHistoryToCap(cloudStore);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Cloud] Push: history trim failed (continuing): {ex.Message}");
+        }
+        if (trimmed > 0)
+        {
+            onPhase?.Invoke("클라우드 정리 중");
+            DrainQueueWithProgress(cloudStore, trimmed, progress, capMs: 900_000);
+        }
+
+        onPhase?.Invoke("클라우드 반영 중");
         cloudStore.BeginSaveBatch();
         int count = 0;
         int deletedCloud = 0;
@@ -221,6 +270,13 @@ public static class CloudSyncCoordinator
                     }
                     continue;
                 }
+
+                // issue #81 — 불변 history run 이 이미 클라우드에 있으면 read/압축/RPC 없이
+                // 스킵한다. 파일명=고유 run id 인 완결 스냅샷이라 양쪽 존재 시 내용 동일 보장.
+                // 종전엔 파일마다 read+압축 후 ClientBeginFileUpload 로 DuplicateRequest 를
+                // 받아야 "already up to date" 판정이 나서 수백 파일 대량 왕복이 느렸다.
+                if (IsHistoryRunFile(path) && cloudStore.FileExists(path))
+                    continue;
 
                 // P0-2 — a recovered-session progress.save push gets a
                 // one-time user confirmation before it's allowed to overwrite
@@ -259,7 +315,12 @@ public static class CloudSyncCoordinator
         // upload plus any mirror-deletes queued above) finishes or the budget
         // runs out; only once it reports drained can LastBatchHadFailures be
         // trusted (see SteamKit2CloudSaveStore.Flush / EndSaveBatch).
-        bool drained = cloudStore.Flush(timeoutMs: 120_000);
+        //
+        // issue #81 — 상한을 120초 → 15분으로. 백로그 트림+대량 업로드가 120초를 넘기면
+        // 작업이 백그라운드로 계속 도는데도 UI 가 조기 해제(프리즈 풀림)돼 실패처럼 보였다.
+        // 삭제/업로드는 각기 3회 재시도 후 실패-스킵하므로 큐는 유한 시간에 반드시 비워진다
+        // (무한 대기 아님). EndSaveBatch 의 per-file 진행률이 대기 동안 UI 로 계속 흐른다.
+        bool drained = cloudStore.Flush(timeoutMs: 900_000);
 
         CloudBatchOutcome outcome;
         if (!drained)
@@ -283,14 +344,14 @@ public static class CloudSyncCoordinator
         return outcome;
     }
 
-    // Unlike Push, Pull has no batch/write-queue involved — every download and
-    // local write below is already awaited in-line, so by the time this
-    // method returns everything has genuinely finished (no TimedOut case).
-    // The only honesty gap was the return value never reflecting per-file
-    // failures — fixed by tracking anyFailure below.
+    // 다운로드/로컬 쓰기는 인라인 await 이라 반환 시 완료가 보장된다(TimedOut 없음). issue #81:
+    // 클라우드 히스토리 트림만 쓰기 큐를 쓰며, 다운로드 시작 전에 드레인까지 대기한다.
+    // progress/onPhase (issue #81): push 와 동일 규약. 기본 null 이라 기존 호출부 무영향.
     public static async Task<CloudBatchOutcome> ManualPullAllAsync(
         string accountName,
-        string refreshToken
+        string refreshToken,
+        IProgress<(int done, int total)> progress = null,
+        Action<string> onPhase = null
     )
     {
         var localStore = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -298,15 +359,41 @@ public static class CloudSyncCoordinator
             SteamKit2CloudSaveStore.Instance
             ?? new SteamKit2CloudSaveStore(accountName, refreshToken);
 
+        // 트림이 클라우드 전체를 보고 판단하도록 캐시 로드를 먼저 보장(push 와 동일).
+        await cloudStore.WaitForCacheReadyAsync(15_000).ConfigureAwait(false);
+
+        // issue #81 — pull 로도 클라우드 히스토리를 100/5MB 로 트림해 백로그를 치유한다
+        // (어느 클라우드 동작으로든 자가 치유되도록 push/pull 양쪽에 둔다). 트림은 클라우드
+        // 서버·캐시에서만 제거(로컬 미접촉). 아래 다운로드 목록은 트림 후 캐시 기준이라
+        // 방금 지운 오래된 run 을 다시 받으려 하지 않는다.
+        int trimmed = 0;
+        try
+        {
+            trimmed = TrimCloudHistoryToCap(cloudStore);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Cloud] Pull: history trim failed (continuing): {ex.Message}");
+        }
+        if (trimmed > 0)
+        {
+            onPhase?.Invoke("클라우드 정리 중");
+            DrainQueueWithProgress(cloudStore, trimmed, progress, capMs: 900_000);
+        }
+
+        onPhase?.Invoke("클라우드 받는 중");
         var paths = GetSaveFilePaths(cloudStore);
         PatchHelper.Log($"[Cloud] Pull: starting ({paths.Count} files)");
 
         int downloaded = 0;
         int skipped = 0;
         int deletedLocal = 0;
+        int done = 0;
         bool anyFailure = false;
         foreach (var path in paths)
         {
+            done++;
+            progress?.Report((done, paths.Count));
             try
             {
                 if (!cloudStore.FileExists(path))
@@ -321,6 +408,14 @@ public static class CloudSyncCoordinator
                     {
                         skipped++;
                     }
+                    continue;
+                }
+                // issue #81 — 불변 history run 을 로컬이 이미 갖고 있으면 다운로드 스킵.
+                // 파일명=고유 run id 완결 스냅샷이라 내용 동일 보장 → 매번 재다운로드하던
+                // 대량 순차 왕복(느린 pull) 제거. (mutable 파일은 종전대로 다운로드.)
+                if (IsHistoryRunFile(path) && localStore.FileExists(path))
+                {
+                    skipped++;
                     continue;
                 }
                 PatchHelper.Log($"[Cloud] Pull: downloading {path}");
@@ -375,6 +470,101 @@ public static class CloudSyncCoordinator
                 + $"{deletedLocal} local files mirror-deleted, outcome={outcome}"
         );
         return outcome;
+    }
+
+    // issue #81 — 런처-측 클라우드 히스토리 캡. 게임의 RunHistorySaveManager 캡(100/5MB)은
+    // 이제 ForgetFile 실구현으로 플레이 중 작동하지만, (1) 게임이 크래시해 못 켜지는 제보자,
+    // (2) 이미 쿼터를 넘긴 백로그(제보자 ~1000개, 사용자 174개)를 능동 정리하려면 게임과
+    // 무관하게 런처에서도 트림이 필요하다. 각 (프로필×모드) 히스토리를 newest-100/5MB 로
+    // 줄이며 오래된 run 부터 cloudStore.DeleteFile(=ClientDeleteFile, 로컬 GodotFileIo 미접촉)
+    // 로 클라우드에서만 제거한다. 반환값=삭제한 run 수. 직렬 _writeQueue 라 대량도 순차 처리.
+    public static int TrimCloudHistoryToCap(ICloudSaveStore cloud)
+    {
+        int totalDeleted = 0;
+        var wasModded = UserDataPathProvider.IsRunningModded;
+        try
+        {
+            foreach (bool modded in new[] { false, true })
+            {
+                UserDataPathProvider.IsRunningModded = modded;
+                for (int profile = 1; profile <= 3; profile++)
+                {
+                    totalDeleted += TrimOneHistoryDir(cloud, SavePathCompat.GetHistoryPath(profile));
+                }
+            }
+        }
+        finally
+        {
+            UserDataPathProvider.IsRunningModded = wasModded;
+        }
+        if (totalDeleted > 0)
+            PatchHelper.Log(
+                $"[Cloud] History cap: trimmed {totalDeleted} old run(s) from cloud (cap {CloudHistoryFileCap}/5MB)"
+            );
+        return totalDeleted;
+    }
+
+    private static int TrimOneHistoryDir(ICloudSaveStore cloud, string historyDir)
+    {
+        string[] files;
+        try
+        {
+            files = cloud.GetFilesInDirectory(historyDir);
+        }
+        catch
+        {
+            return 0;
+        }
+
+        // .run 만(.backup/.tmp 제외). 게임과 동일하게 GetLastModifiedTime 최신순 정렬 후
+        // 오래된 것(리스트 끝)부터 제거해 파일수·바이트 두 한도 이하로.
+        var runs = files
+            .Where(f =>
+                f.EndsWith(".run") && !f.EndsWith(".backup") && !f.EndsWith(".tmp")
+            )
+            .Select(f => $"{historyDir}/{f}")
+            .OrderByDescending(p => cloud.GetLastModifiedTime(p))
+            .ToList();
+
+        long totalBytes = 0;
+        foreach (var p in runs)
+            totalBytes += cloud.GetFileSize(p);
+
+        int count = runs.Count;
+        int deleted = 0;
+        int oldestIdx = runs.Count - 1;
+        while ((count > CloudHistoryFileCap || totalBytes > CloudHistoryByteCap) && oldestIdx >= 0)
+        {
+            var victim = runs[oldestIdx];
+            totalBytes -= cloud.GetFileSize(victim);
+            count--;
+            cloud.DeleteFile(victim);
+            deleted++;
+            oldestIdx--;
+        }
+        return deleted;
+    }
+
+    // issue #81 — 쓰기 큐가 비워질 때까지 진행률을 폴링 보고하며 대기한다(무진행 프리징
+    // 오해 방지). total = 대기 시작 시점의 큐 항목 수(트림 삭제 개수). 삭제는 성공/실패
+    // 모두 유한 재시도 후 종료되므로 PendingWriteCount 는 반드시 0 에 도달한다. capMs 는
+    // 무한 대기를 막는 안전 상한(정상 경로에선 도달 전에 드레인됨).
+    private static void DrainQueueWithProgress(
+        SteamKit2CloudSaveStore store,
+        int total,
+        IProgress<(int done, int total)> progress,
+        int capMs
+    )
+    {
+        long deadline = Environment.TickCount64 + capMs;
+        while (store.PendingWriteCount > 0 && Environment.TickCount64 < deadline)
+        {
+            int done = Math.Max(0, total - store.PendingWriteCount);
+            progress?.Report((done, total));
+            System.Threading.Thread.Sleep(250);
+        }
+        if (store.PendingWriteCount == 0)
+            progress?.Report((total, total));
     }
 
     public static List<string> GetSaveFilePaths(ISaveStore store)
@@ -477,6 +667,14 @@ public static class CloudSyncCoordinator
     {
         var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
         return lower.EndsWith("/current_run.save") || lower.EndsWith("/current_run_mp.save");
+    }
+
+    // issue #81 — history/<유닉스ts>.run 히스토리 레코드. 클라우드 캡 대상이자 auto-sync 에서
+    // 재-push 를 막을 대상(ping-pong 방지). current_run.save 는 히스토리가 아님(ephemeral).
+    internal static bool IsHistoryRunFile(string path)
+    {
+        var lower = path.Replace("user://", "").Replace("\\", "/").ToLowerInvariant();
+        return lower.Contains("/history/") && lower.EndsWith(".run") && !lower.EndsWith(".backup");
     }
 
     // P0-2: identifies progress.save among the various per-profile paths
