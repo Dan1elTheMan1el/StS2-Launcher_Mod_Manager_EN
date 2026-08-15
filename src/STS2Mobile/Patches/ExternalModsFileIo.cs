@@ -18,7 +18,9 @@ namespace STS2Mobile.Patches;
 // the Path.Combine(..., "mods") call into a generated state-machine MoveNext
 // and the main-body transpiler can no longer find the ldstr. Swapping the
 // fileIo argument via prefix is signature-stable across that lowering.
-public sealed class ExternalModsFileIo : IModManagerFileIo
+// Not sealed: MakeDirRecursive/CopyFile below must be declared `virtual` (see
+// comment there), and C# forbids new virtual members in a sealed class.
+public class ExternalModsFileIo : IModManagerFileIo
 {
     private readonly string _externalRoot;
     private readonly IModManagerFileIo _inner;
@@ -184,7 +186,14 @@ public sealed class ExternalModsFileIo : IModManagerFileIo
     // runtime. The game uses these for the first-time unmodded→modded save copy
     // (user:// paths, never redirected) and both members are simply unused on
     // pre-0.111 games, so this stays dual-version safe.
-    public void MakeDirRecursive(string path)
+    //
+    // MUST be `virtual`: the compile-time interface doesn't declare these, so the
+    // compiler emits them as plain non-virtual methods — and the runtime can only
+    // bind interface slots to virtual methods (ECMA-335), so VTable setup still
+    // failed on device (code-337 QA, 2026-08-15) until the flag was forced. The
+    // pre-existing five members get `virtual final newslot` from the compiler
+    // automatically; these two need it spelled out.
+    public virtual void MakeDirRecursive(string path)
     {
         var redirected = TryRedirect(path);
         if (redirected == null)
@@ -202,7 +211,7 @@ public sealed class ExternalModsFileIo : IModManagerFileIo
         }
     }
 
-    public Godot.Error CopyFile(string sourcePath, string destinationPath)
+    public virtual Godot.Error CopyFile(string sourcePath, string destinationPath)
     {
         var src = TryRedirect(sourcePath);
         var dst = TryRedirect(destinationPath);
