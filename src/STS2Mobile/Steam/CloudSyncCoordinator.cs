@@ -101,7 +101,6 @@ public static class CloudSyncCoordinator
                 // 동기화의 주원인 해소.
                 if (IsHistoryRunFile(path))
                     return;
-                CloudDiag.LogDownloadNeed(local, cloud, path);
                 string localContent = local.ReadFile(path);
                 string cloudContent = await cloud.ReadFileAsync(path);
 
@@ -230,17 +229,6 @@ public static class CloudSyncCoordinator
 
         var paths = GetSaveFilePaths(localStore);
         PatchHelper.Log($"[Cloud] Push: starting ({paths.Count} files)");
-
-        // issue #81 계측 (A): 클라우드에만 존재하는 stale history .run 을 개수·목록만
-        // 로깅(실삭제 없음). 이 push 는 아래 로직대로 그대로 진행됨 — 동작 불변.
-        try
-        {
-            CloudDiag.LogPruneCandidates(localStore, cloudStore);
-        }
-        catch (Exception ex)
-        {
-            CloudDiag.Log($"prune-candidate scan failed: {ex.Message}");
-        }
 
         // issue #81 — 업로드 전에 클라우드 히스토리를 100/5MB 로 트림해 쿼터를 확보한다.
         // 백로그(제보자 ~1000개)로 쿼터가 꽉 차 신규 업로드가 LimitExceeded 로 전멸하던

@@ -252,11 +252,6 @@ public class CloudFileCache
         uint startIndex = 0;
         const uint pageSize = 500;
 
-        // issue #81 계측: enumerate 원본 필드(raw size / compressed size / sha / ts)를
-        // 세션 1회 덤프하기 위한 수집기. 캐시는 size/ts/sha 만 보관하므로
-        // compressed_file_size 는 여기서만 확보 가능.
-        var diagDump = new List<(string, uint, uint, string, ulong)>();
-
         while (true)
         {
             var result = _connection
@@ -283,15 +278,6 @@ public class CloudFileCache
                     Timestamp = DateTimeOffset.FromUnixTimeSeconds((long)file.timestamp),
                     Sha = file.file_sha, // issue #81: 다운로드 없는 동일성 판정용
                 };
-                diagDump.Add(
-                    (
-                        file.filename,
-                        file.file_size,
-                        file.compressed_file_size,
-                        file.file_sha,
-                        file.timestamp
-                    )
-                );
             }
 
             startIndex += (uint)result.files.Count;
@@ -300,7 +286,6 @@ public class CloudFileCache
         }
 
         PatchHelper.Log($"[Cloud] Enumerated {_files.Count} cloud files");
-        CloudDiag.DumpEnumerate(diagDump); // issue #81 계측 (세션 1회)
 
         // P0-1 — this is the first confirmed-successful cloud RPC of the
         // session (connection is up, logged on, and just proved it works), so
