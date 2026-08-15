@@ -141,6 +141,12 @@ public static class ModEntry
             AppLifecyclePatches.Apply(_harmony);
             TouchInputPatches.Apply(_harmony);
             GameInputSuppressPatches.Apply(_harmony);
+            // issue #85: NInputManager._controllerInputMap can stay permanently
+            // empty for an entire session (game-side Init() NRE race + a
+            // self-heal gate that only fires on a controller-family change),
+            // breaking controller input dispatch and hotkey glyphs. Safety net
+            // sits on the game's own OnControllerTypeChanged() self-heal hook.
+            ControllerMapRefillPatches.Apply(_harmony);
             CardRewardPatches.Apply(_harmony);
             EarlyAccessDisclaimerPatches.Apply(_harmony);
             FeedbackScreenPatches.Apply(_harmony);
