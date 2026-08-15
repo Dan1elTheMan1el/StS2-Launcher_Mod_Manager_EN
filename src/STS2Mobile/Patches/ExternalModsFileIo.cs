@@ -175,4 +175,51 @@ public sealed class ExternalModsFileIo : IModManagerFileIo
             return null;
         }
     }
+
+    // sts2 v0.111.0 added MakeDirRecursive/CopyFile to IModManagerFileIo; without
+    // them this class fails VTable setup under 0.111 and GameStartup dies (issue
+    // #86). We compile against the pre-0.111 reference dll, so `_inner` cannot be
+    // called for these — non-redirected paths instead mirror the game's own
+    // ModManagerFileIo verbatim (DirAccess statics), which is what `_inner` is at
+    // runtime. The game uses these for the first-time unmodded→modded save copy
+    // (user:// paths, never redirected) and both members are simply unused on
+    // pre-0.111 games, so this stays dual-version safe.
+    public void MakeDirRecursive(string path)
+    {
+        var redirected = TryRedirect(path);
+        if (redirected == null)
+        {
+            Godot.DirAccess.MakeDirRecursiveAbsolute(path);
+            return;
+        }
+        try
+        {
+            Directory.CreateDirectory(redirected);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] MakeDirRecursive({redirected}) failed: {ex.Message}");
+        }
+    }
+
+    public Godot.Error CopyFile(string sourcePath, string destinationPath)
+    {
+        var src = TryRedirect(sourcePath);
+        var dst = TryRedirect(destinationPath);
+        if (src == null && dst == null)
+            return Godot.DirAccess.CopyAbsolute(sourcePath, destinationPath);
+
+        // At least one side lives in the external mods dir; a mixed copy with a
+        // user:// path on the other side is not expected from any current caller.
+        try
+        {
+            File.Copy(src ?? sourcePath, dst ?? destinationPath, overwrite: true);
+            return Godot.Error.Ok;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Mods] CopyFile({src ?? sourcePath} -> {dst ?? destinationPath}) failed: {ex.Message}");
+            return Godot.Error.Failed;
+        }
+    }
 }
