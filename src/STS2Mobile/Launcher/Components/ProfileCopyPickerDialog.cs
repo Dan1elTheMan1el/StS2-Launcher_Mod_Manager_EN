@@ -6,7 +6,7 @@ using STS2Mobile.Steam;
 
 namespace STS2Mobile.Launcher.Components;
 
-// Issue #64: slot picker for the profile-copy ("복제") flow — reused for both the
+// Issue #64: slot picker for the profile-copy ("copy") flow — reused for both the
 // source-slot step and the destination-slot step of ProfileCopyFlow.RunCopyAsync
 // (different `title`/`hint`/pre-filtered `slots` each time; same class either
 // way). Skeleton cloned from ProfilePickerDialog (same TCS Result pattern, same
@@ -23,7 +23,7 @@ public class ProfileCopyPickerDialog : ColorRect
     public Task<SaveProgressSummary> Result => _result.Task;
 
     // Same struct/formula as ProfilePickerDialog.DialogSizing — see that file
-    // for the "글자가 너무 작아" rationale behind the floors.
+    // for the rationale behind the "font size is too small" floors.
     private struct DialogSizing
     {
         public int TitleFs;
@@ -109,7 +109,7 @@ public class ProfileCopyPickerDialog : ColorRect
         vbox.AddChild(buttonRow);
 
         var closeButton = new StyledButton(
-            "닫기",
+            "Close",
             scale,
             fontSize: sz.CloseFs,
             height: sz.CloseHeight
@@ -172,7 +172,7 @@ public class ProfileCopyPickerDialog : ColorRect
         hbox.AddChild(textCol);
 
         var titleLabel = new StyledLabel(
-            slot.ProfileLabel ?? "프로필",
+            slot.ProfileLabel ?? "Profile",
             scale,
             fontSize: sz.RowTitleFs,
             align: HorizontalAlignment.Left
@@ -194,8 +194,8 @@ public class ProfileCopyPickerDialog : ColorRect
         // slot has anything at all, which is exactly the distinction that
         // matters when picking a DESTINATION (overwrite-empty vs. overwrite-data).
         var (badgeText, badgeColor) = slot.IsEmpty
-            ? ("비어 있음", new Color(0.6f, 0.6f, 0.6f))
-            : ("데이터 있음", new Color(0.3f, 0.75f, 0.5f));
+            ? ("Empty", new Color(0.6f, 0.6f, 0.6f))
+            : ("Has Data", new Color(0.3f, 0.75f, 0.5f));
         var badge = new PanelContainer();
         var badgeStyle = new StyleBoxFlat();
         badgeStyle.BgColor = badgeColor;
@@ -217,7 +217,7 @@ public class ProfileCopyPickerDialog : ColorRect
     private static string DescribeSlot(SaveProgressSummary slot)
     {
         if (slot.IsEmpty)
-            return "비어 있음";
+            return "Empty";
         var parts = new List<string> { slot.FormatSize() };
         if (slot.ParseSucceeded)
             parts.Add(slot.FormatPlaytime());

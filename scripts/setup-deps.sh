@@ -11,7 +11,7 @@ DEPS_DIR="${DEPS_DIR:-$REPO_PARENT/req_files}"
 EKYSO_APK="$DEPS_DIR/StS2Launcher-v0.2.0.apk"
 GODOT_TPZ="$DEPS_DIR/Godot_v4.5.1-stable_mono_export_templates.tpz"
 FMOD_TARBALL="$DEPS_DIR/fmodstudioapi20313android.tar.gz"
-STEAM_GAME_DIR="$DEPS_DIR/data_sts2_windows_x86_64"
+STEAM_GAME_DIR="$DEPS_DIR/data_sts2_macos_arm64"
 
 # csproj references `../../upstream/...` relative to src/STS2Mobile/ → repo root.
 UPSTREAM_PUBLISH="$ROOT/upstream/godot-export/.godot/mono/publish/arm64"
@@ -92,7 +92,7 @@ EKYSO_GODOT_SO="$WORK/ekyso_apk/lib/arm64-v8a/libgodot_android.so"
 patch_aar() {
     local aar="$1"
     local so="$2"
-    python - "$aar" "$so" <<'PYEOF'
+    python3 - "$aar" "$so" <<'PYEOF'
 import shutil, sys, zipfile, os
 aar, so = sys.argv[1], sys.argv[2]
 tmp = aar + ".new"

@@ -230,7 +230,7 @@ public static class LauncherPatches
         {
             try
             {
-                overlay?.SetStatus("클라우드 상태 확인 중...");
+                overlay?.SetStatus("Checking cloud status...");
                 var existing = SteamKit2CloudSaveStore.Instance;
                 var cloudStore =
                     existing ?? new SteamKit2CloudSaveStore(SavedAccountName, SavedRefreshToken);
@@ -337,8 +337,8 @@ public static class LauncherPatches
             await Launcher.Components.SimpleResultDialog.ShowAsync(
                 parent,
                 false,
-                "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n"
-                    + "앱을 재실행한 뒤 다시 로그인해 주세요.\n(로컬 기능은 계속 사용할 수 있습니다)",
+                "Steam login has expired, so cloud save features cannot be used.\n"
+                    + "Please restart the app and log in again.\n(Local features remain available)",
                 Launcher.LauncherUI.ResolveScale(parent)
             );
             await RunLocalOnlyMenuAsync(parent, localStore);
@@ -579,7 +579,7 @@ public static class LauncherPatches
                     : new Progress<(int done, int total)>(p =>
                         overlay.SetBackupProgress(p.done, p.total)
                     );
-            overlay?.SetStatus("클라우드 백업 중", "");
+            overlay?.SetStatus("Backing up cloud", "");
             conflictBackup = await LocalBackupService.BackupConflictDiscardedAsync(
                 localStore,
                 cloudStore,
@@ -589,7 +589,7 @@ public static class LauncherPatches
         }
 
         if (choice != CloudConflictChoice.Cancel)
-            overlay?.SetStatus("동기화 적용 중...");
+            overlay?.SetStatus("Applying sync...");
 
         switch (choice)
         {

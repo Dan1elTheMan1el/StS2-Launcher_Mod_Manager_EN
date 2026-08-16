@@ -66,8 +66,8 @@ public static class Ui
     //   UNSUBSCRIBE / Remove / destroy → Danger    (red outline)
     //   ENABLE  (stash restore)        → Accent    (accent outline)
     //   DISABLE (stash away)           → Danger    (red outline — user decision:
-    //                                    "해제한다"는 피드백이 UNSUBSCRIBE 와 같은
-    //                                    색으로 읽혀야 함, 2026-07-11)
+    //                                    Feedback that "Release" should be read
+    //                                    with the same color as UNSUBSCRIBE, 2026-07-11)
     //   DETAIL / neutral secondary     → Secondary
     //   CLOSE / BACK / tabs / chrome   → Ghost
     // The stash toggle flips label AND variant together so "Disable" can never

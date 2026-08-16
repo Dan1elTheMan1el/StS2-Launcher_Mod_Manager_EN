@@ -49,7 +49,7 @@ def main() -> int:
                          help="Translated release tag to update (defaults to <tag>-en)")
     parser.add_argument("--branch", default=None,
                          help="Translated branch to pull (defaults to translate/<tag>)")
-    parser.add_argument("--build-cmd", default="bash scripts/build.sh",
+    parser.add_argument("--build-cmd", default="bash scripts/build.sh --no-bump",
                          help="Command that produces the APK")
     parser.add_argument(
         "--apk-glob", default="android/build/outputs/apk/**/*.apk",

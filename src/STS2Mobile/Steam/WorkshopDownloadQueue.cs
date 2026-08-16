@@ -190,9 +190,10 @@ public class WorkshopDownloadQueue
                         entry.State = WorkshopDownloadState.Failed;
                         entry.ModId = result.ModId;
                         entry.Error =
-                            result.Conflict ? "이미 수동 설치된 모드와 충돌(덮어쓰지 않음)"
-                            : result.NoManifest ? "모드 매니페스트 없음"
-                            : (result.Error ?? "다운로드 실패");
+                            result.Conflict
+                                ? "Conflict with already manually installed mod (not overwriting)"
+                            : result.NoManifest ? "No mod manifest"
+                            : (result.Error ?? "Download failed");
                     }
                 }
             }
@@ -201,7 +202,7 @@ public class WorkshopDownloadQueue
                 lock (_gate)
                 {
                     entry.State = WorkshopDownloadState.Failed;
-                    entry.Error = "취소됨";
+                    entry.Error = "Cancelled";
                 }
             }
             catch (Exception ex)

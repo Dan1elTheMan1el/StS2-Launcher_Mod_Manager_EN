@@ -4,15 +4,15 @@ using HarmonyLib;
 
 namespace STS2Mobile.Patches;
 
-// Issue #11 — Fold6 unfolded fullscreen에서 검정 배경에 가로 tear 줄무늬가 발생하지만 dev 측
-// 단말(Fold7)에서는 재현되지 않아 보고자 단말의 surface/swapchain/디스플레이 메타를 logcat
-// 으로 받아내기 위한 1회성 진단 패치.
+// Issue #11 — Horizontal tear lines appear on a black background in Fold6 unfolded fullscreen, but since it cannot
+// be reproduced on the dev device (Fold7), this is a one-time diagnostic patch to receive the device's
+// surface/swapchain/display metadata via logcat for reporting.
 //
-// 1) boot 직후 1회: 단말 GPU/렌더러/디스플레이 정보
-// 2) Window.SizeChanged 마다: viewport / content scale / 비율
+// 1) Once right after boot: Device GPU/renderer/display information
+// 2) Every Window.SizeChanged: Viewport / content scale / ratio
 //
-// 둘 다 저빈도 이벤트(boot 1회 + 사용자 fold/unfold/회전/분할 진입 시), 메인 루프 밖에서만
-// 동작하므로 게임 FPS에는 영향 없음.
+// Both are low-frequency events (boot once + upon user fold/unfold/rotation/split-screen entry), running only
+// outside the main loop, so it has no impact on game FPS.
 public static class RenderDiagnosticPatches
 {
     private const string Tag = "[Diag/Fold]";
@@ -21,8 +21,8 @@ public static class RenderDiagnosticPatches
 
     public static void Apply(Harmony _)
     {
-        // SceneTree가 아직 만들어지지 않았을 수 있으므로 deferred로 진단을 미룬다.
-        // ModEntry.ScheduleStandaloneLauncher와 동일한 self-retry 패턴.
+        // Since the SceneTree might not be created yet, defer the diagnostics.
+        // Same self-retry pattern as ModEntry.ScheduleStandaloneLauncher.
         Callable.From(RunWhenReady).CallDeferred();
     }
 
@@ -65,13 +65,13 @@ public static class RenderDiagnosticPatches
             return;
         _bootLogged = true;
 
-        // OS / 단말
+        // OS / Device
         PatchHelper.Log(
             $"{Tag} OS={OS.GetName()} model={OS.GetModelName()} "
                 + $"distro={OS.GetDistributionName()} version={OS.GetVersion()}"
         );
 
-        // GPU / 렌더러
+        // GPU / Renderer
         try
         {
             PatchHelper.Log(
@@ -86,7 +86,7 @@ public static class RenderDiagnosticPatches
             PatchHelper.Log($"{Tag} adapter info unavailable: {ex.Message}");
         }
 
-        // 렌더링 백엔드 (Forward+ / Mobile / Compatibility)
+        // Rendering backend (Forward+ / Mobile / Compatibility)
         try
         {
             var method = ProjectSettings.GetSetting("rendering/renderer/rendering_method");
@@ -103,7 +103,7 @@ public static class RenderDiagnosticPatches
             PatchHelper.Log($"{Tag} project rendering settings unavailable: {ex.Message}");
         }
 
-        // 디스플레이 / DPI
+        // Display / DPI
         try
         {
             var screen = DisplayServer.WindowGetCurrentScreen();

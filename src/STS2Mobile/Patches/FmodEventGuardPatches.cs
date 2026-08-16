@@ -89,9 +89,7 @@ public static class FmodEventGuardPatches
             );
             if (target == null)
             {
-                PatchHelper.Log(
-                    "FAILED GodotObject.Call(StringName, Variant[]): method not found"
-                );
+                PatchHelper.Log("FAILED GodotObject.Call(StringName, Variant[]): method not found");
                 return;
             }
 
@@ -121,7 +119,12 @@ public static class FmodEventGuardPatches
     // (FmodServer included) goes through, from both mod code and game code.
     // It runs for EVERY Call() invocation across the whole app, so step 1
     // (the dictionary lookup) must stay allocation-free and O(1).
-    private static bool CallPrefix(GodotObject __instance, StringName method, Variant[] args, ref Variant __result)
+    private static bool CallPrefix(
+        GodotObject __instance,
+        StringName method,
+        Variant[] args,
+        ref Variant __result
+    )
     {
         try
         {
@@ -153,7 +156,10 @@ public static class FmodEventGuardPatches
                 return true;
 
             var arg0 = args[0];
-            if (arg0.VariantType != Variant.Type.String && arg0.VariantType != Variant.Type.StringName)
+            if (
+                arg0.VariantType != Variant.Type.String
+                && arg0.VariantType != Variant.Type.StringName
+            )
                 return true; // not the shape we expect; let the original run.
 
             var identifier = arg0.AsString();
@@ -170,7 +176,8 @@ public static class FmodEventGuardPatches
             {
                 if (!_knownExisting.TryGetValue(cacheKey, out exists))
                 {
-                    var checkMethod = kind == GuardKind.Guid ? "check_event_guid" : "check_event_path";
+                    var checkMethod =
+                        kind == GuardKind.Guid ? "check_event_guid" : "check_event_path";
                     // Re-enters this very prefix for "check_event_guid"/"check_event_path",
                     // which are not in _guardedMethods, so it falls through
                     // step 1 immediately - no recursion risk.
@@ -207,7 +214,12 @@ public static class FmodEventGuardPatches
     // itself, so FmodBankLoader's materialize-and-retry fallback doesn't re-load
     // it from a second path (FMOD rejects that with error 70, "bank already
     // loaded", which surfaces as a native push_error).
-    private static void CallPostfix(GodotObject __instance, StringName method, Variant[] args, ref Variant __result)
+    private static void CallPostfix(
+        GodotObject __instance,
+        StringName method,
+        Variant[] args,
+        ref Variant __result
+    )
     {
         try
         {

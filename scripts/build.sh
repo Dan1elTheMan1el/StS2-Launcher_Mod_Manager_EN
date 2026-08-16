@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PATCHER_DIR="$ROOT/src/STS2Mobile"
 BUILD_DIR="$ROOT/android"
 GRADLE_PROPS="$BUILD_DIR/gradle.properties"
-APK_DIR="$BUILD_DIR/build/outputs/apk/mono/release"
+APK_DIR="$BUILD_DIR/build/outputs/apk/mono/debug"
 
 # 1. Format
 echo "Formatting C# code..."
@@ -61,6 +61,6 @@ fi
 # 4. Build APK
 echo "Building APK..."
 cd "$BUILD_DIR"
-./gradlew assembleMonoRelease
+./gradlew assembleMonoDebug
 
 echo "Done: $APK_DIR/StS2Launcher-v$NEW_NAME.apk"

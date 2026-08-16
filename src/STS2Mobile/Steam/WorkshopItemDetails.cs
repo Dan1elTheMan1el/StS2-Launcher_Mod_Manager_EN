@@ -60,7 +60,7 @@ public class WorkshopItemDetails
     public bool HasContent => HContentFile != 0 || !string.IsNullOrEmpty(FileUrl);
 }
 
-// One dated entry in a Workshop item's change history ("업데이트 노트"), from
+// One dated entry in a Workshop item's change history ("update notes"), from
 // PublishedFile.GetChangeHistory. Description is BBCode as authored on Steam.
 public class WorkshopChangeEntry
 {

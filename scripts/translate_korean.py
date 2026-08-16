@@ -50,7 +50,7 @@ LOC_TR_RE = re.compile(r"Loc\s*\.\s*Tr\s*\(")
 # Extensions we bother scanning. Keep this to text/source formats — do not
 # add binary or asset extensions.
 SCAN_EXTENSIONS = {
-    ".cs", ".json", ".xml", ".yml", ".yaml", ".txt",
+    ".cs", ".json", ".xml", ".yml", ".yaml", ".txt", # ".md",
     ".gradle", ".java", ".kt", ".kts", ".py", ".sh", ".properties",
     ".gd", ".tscn", ".tres", ".cfg", ".ini",
 }
@@ -80,8 +80,12 @@ GEMINI_ENDPOINT = (
 )
 
 # Split very large files into chunks (by line, not mid-token) so we stay
-# comfortably within request/response size limits.
-MAX_CHARS_PER_CHUNK = 12000
+# comfortably within request/response size limits. Gemini's flash models
+# have a large context window, so this is set high deliberately — chunking
+# is where translation is most likely to corrupt code (a split can land
+# mid-function, and the model only sees one side of a brace pair), so we
+# avoid it unless a file is genuinely huge.
+MAX_CHARS_PER_CHUNK = 100_000
 
 MAX_RETRIES = 6
 RETRY_BACKOFF_SECONDS = 8
@@ -103,6 +107,44 @@ Filename: {filename}
 {content}
 --- FILE CONTENT END ---
 """
+
+PROMPT_TEXT_TEMPLATE = """Translate the following GitHub release {kind} from Korean to English. It may be plain text or Markdown.
+
+Rules:
+1. Translate all Korean (Hangul) text fully and naturally.
+2. Preserve Markdown formatting exactly: headings, lists, links, code spans/blocks, emphasis. Do not translate text inside code spans/blocks, URLs, or usernames (e.g. @someone).
+3. Keep any already-English text as-is.
+4. Do not add commentary, a preamble, or markdown fences around your answer. Output ONLY the translated {kind}, nothing else. If the input is empty, output nothing.
+
+--- {kind_upper} START ---
+{content}
+--- {kind_upper} END ---
+"""
+
+
+def translate_plain_text(api_key: str, content: str, kind: str) -> str | None:
+    """Translate free-form text (release title/body), not source code."""
+    if not content.strip():
+        return ""
+    prompt = PROMPT_TEXT_TEMPLATE.format(kind=kind, kind_upper=kind.upper(), content=content)
+    model = GEMINI_MODEL
+    for attempt in range(1, MAX_RETRIES + 1):
+        text, status = _post_to_gemini(api_key, model, prompt)
+        if text is not None:
+            return text
+        transient = status in (429, 500, 502, 503, 504) or status is None
+        if not transient:
+            print(f"  ! HTTP {status} translating release {kind}: not retrying", file=sys.stderr)
+            return None
+        if status == 503 and model != FALLBACK_MODEL and attempt >= max(2, MAX_RETRIES // 2):
+            model = FALLBACK_MODEL
+        if attempt < MAX_RETRIES:
+            wait = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), 90) + random.uniform(0, 3)
+            print(f"  ! HTTP {status} translating release {kind} (attempt {attempt}/{MAX_RETRIES}), "
+                  f"retrying in {wait:.0f}s", file=sys.stderr)
+            time.sleep(wait)
+    print(f"  ! giving up translating release {kind}", file=sys.stderr)
+    return None
 
 
 def _post_to_gemini(api_key: str, model: str, prompt: str) -> tuple[str | None, int | None]:
@@ -215,6 +257,25 @@ def translate_file(api_key: str, path: str, content: str) -> str | None:
     return "".join(out) if changed else content
 
 
+# Structural characters that should appear exactly as often in the
+# translation as in the original — if the model dropped or invented a
+# brace/paren while translating (most likely to happen on a chunk that was
+# split mid-function), the counts won't match and we should refuse to write
+# the result rather than hand back code that won't compile.
+STRUCTURAL_CHARS = "{}()[]"
+
+
+def structurally_intact(original: str, translated: str) -> tuple[bool, str]:
+    mismatches = []
+    for ch in STRUCTURAL_CHARS:
+        oc, tc = original.count(ch), translated.count(ch)
+        if oc != tc:
+            mismatches.append(f"'{ch}': {oc} -> {tc}")
+    if mismatches:
+        return False, ", ".join(mismatches)
+    return True, ""
+
+
 # --- File walking ------------------------------------------------------------
 
 def is_excluded_file(filename: str) -> bool:
@@ -244,14 +305,53 @@ def main() -> int:
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY", ""))
     parser.add_argument("--dry-run", action="store_true", help="List files that would change, don't call the API")
     parser.add_argument("--model", default=GEMINI_MODEL, help="Override the Gemini model/alias to call")
+    parser.add_argument(
+        "--translate-release", action="store_true",
+        help="Instead of scanning the repo, translate release notes/title from "
+             "the RELEASE_BODY / RELEASE_NAME env vars and write "
+             "translated_notes.md / translated_title.txt",
+    )
+    parser.add_argument("--notes-out", default="translated_notes.md")
+    parser.add_argument("--title-out", default="translated_title.txt")
     args = parser.parse_args()
 
     GEMINI_MODEL = args.model
 
-    if not args.api_key and not args.dry_run:
+    if not args.api_key and not (args.dry_run and not args.translate_release):
         print("No API key provided (set GEMINI_API_KEY or pass --api-key). "
               "Skipping translation for this run.", file=sys.stderr)
         return 0
+
+    if args.translate_release:
+        return translate_release_notes(args)
+
+    return translate_repo(args)
+
+
+def translate_release_notes(args: argparse.Namespace) -> int:
+    body = os.environ.get("RELEASE_BODY", "")
+    name = os.environ.get("RELEASE_NAME", "")
+
+    translated_body = translate_plain_text(args.api_key, body, "notes") if body.strip() else ""
+    if body.strip() and translated_body is None:
+        print("  ! falling back to original (untranslated) release notes", file=sys.stderr)
+        translated_body = body
+
+    translated_title = translate_plain_text(args.api_key, name, "title") if name.strip() else ""
+    if name.strip() and translated_title is None:
+        print("  ! falling back to original (untranslated) release title", file=sys.stderr)
+        translated_title = name
+
+    with open(args.notes_out, "w", encoding="utf-8") as f:
+        f.write(translated_body)
+    with open(args.title_out, "w", encoding="utf-8") as f:
+        f.write(translated_title.strip())
+
+    print(f"Wrote {args.notes_out} and {args.title_out}")
+    return 0
+
+
+def translate_repo(args: argparse.Namespace) -> int:
 
     candidates = find_candidate_files(args.repo_root)
     touched = []
@@ -284,6 +384,13 @@ def main() -> int:
             continue
         if translated.strip() == "":
             print(f"  ! skipped (empty response): {rel}", file=sys.stderr)
+            continue
+
+        ok, detail = structurally_intact(content, translated)
+        if not ok:
+            print(f"  ! skipped (structural mismatch, likely corrupted syntax) {rel}: {detail}",
+                  file=sys.stderr)
+            print(f"    file left untouched — will retry on next run", file=sys.stderr)
             continue
 
         with open(path, "w", encoding="utf-8") as f:

@@ -149,30 +149,30 @@ public class CloudConflictDialog : ColorRect
         var (titleText, subtitleText) = decision switch
         {
             SyncDecision.Identical => (
-                "세이브 동기화 상태",
-                "로컬과 Steam Cloud의 진행도가 일치합니다.\n별도 작업이 필요하지 않습니다."
+                "Save Sync Status",
+                "Progress on local and Steam Cloud matches.\nNo extra action is needed."
             ),
             SyncDecision.NoData => (
-                "세이브 동기화 상태",
-                "로컬과 Steam Cloud 모두 진행도 데이터가 없습니다."
+                "Save Sync Status",
+                "No progress data found on either local or Steam Cloud."
             ),
             SyncDecision.MobileOnly => (
-                "세이브 데이터 동기화",
-                "Steam Cloud에 진행도가 없습니다.\n이 디바이스 진행도를 클라우드로 업로드할까요?"
+                "Save Data Sync",
+                "No progress found on Steam Cloud.\nUpload this device's progress to the cloud?"
             ),
             SyncDecision.CloudOnly => (
-                "세이브 데이터 동기화",
-                "이 디바이스에 진행도가 없습니다.\nSteam Cloud의 진행도를 가져올까요?"
+                "Save Data Sync",
+                "No progress found on this device.\nFetch progress from Steam Cloud?"
             ),
             SyncDecision.Unverified => (
-                "세이브 상태 확인 불가",
-                "일시적으로 Steam Cloud 상태를 확인하지 못했습니다.\n잠시 후 다시 시도해 주세요."
+                "Save Status Unverified",
+                "Temporarily unable to check Steam Cloud status.\nPlease try again later."
             ),
             _ => (
-                "세이브 데이터 충돌",
+                "Save Data Conflict",
                 diffSlotCount > 1
-                    ? $"이 디바이스와 Steam Cloud의 진행도가 다릅니다 ({diffSlotCount}개 프로필).\n어느 쪽을 유지할지 선택하세요."
-                    : "이 디바이스와 Steam Cloud의 진행도가 다릅니다.\n어느 쪽을 유지할지 선택하세요."
+                    ? $"Progress differs between this device and Steam Cloud ({diffSlotCount} profiles).\nChoose which side to keep."
+                    : "Progress differs between this device and Steam Cloud.\nChoose which side to keep."
             ),
         };
         if (!string.IsNullOrEmpty(customTitle))
@@ -194,7 +194,7 @@ public class CloudConflictDialog : ColorRect
         vbox.AddChild(cardsRow);
 
         cardsRow.AddChild(
-            BuildSummaryCard("📱  이 디바이스 (로컬)", local, localIsMoreRecent, scale, sz)
+            BuildSummaryCard("📱  This Device (Local)", local, localIsMoreRecent, scale, sz)
         );
         cardsRow.AddChild(BuildSummaryCard("☁  Steam Cloud", cloud, !localIsMoreRecent, scale, sz));
 
@@ -216,7 +216,7 @@ public class CloudConflictDialog : ColorRect
         // Hide them and offer only a close action so the dialog is purely
         // informational.
         var cancelBtn = new StyledButton(
-            showChoiceButtons ? "취소" : "닫기",
+            showChoiceButtons ? "Cancel" : "Close",
             scale,
             fontSize: sz.ButtonFs,
             height: sz.ButtonHeight
@@ -231,7 +231,7 @@ public class CloudConflictDialog : ColorRect
         if (showChoiceButtons)
         {
             var localBtn = new StyledButton(
-                "로컬 유지",
+                "Keep Local",
                 scale,
                 fontSize: sz.ButtonFs + 1,
                 height: sz.ButtonHeight
@@ -246,7 +246,7 @@ public class CloudConflictDialog : ColorRect
             buttonRow.AddChild(localBtn);
 
             var cloudBtn = new StyledButton(
-                "클라우드 유지",
+                "Keep Cloud",
                 scale,
                 fontSize: sz.ButtonFs + 1,
                 height: sz.ButtonHeight
@@ -352,7 +352,7 @@ public class CloudConflictDialog : ColorRect
             badgeStyle.SetCornerRadiusAll((int)(4 * scale));
             badgeStyle.SetContentMarginAll((int)(6 * scale));
             badge.AddThemeStyleboxOverride("panel", badgeStyle);
-            var badgeLabel = new StyledLabel("최근", scale, fontSize: sz.BadgeFs);
+            var badgeLabel = new StyledLabel("Recent", scale, fontSize: sz.BadgeFs);
             badge.AddChild(badgeLabel);
             headerRow.AddChild(badge);
         }
@@ -366,7 +366,7 @@ public class CloudConflictDialog : ColorRect
         if (s.IsEmpty)
         {
             var emptyMsg = new StyledLabel(
-                "진행도 데이터 없음",
+                "No Progress Data",
                 scale,
                 fontSize: sz.CardRowFs + 2,
                 align: HorizontalAlignment.Center
@@ -378,37 +378,37 @@ public class CloudConflictDialog : ColorRect
             return card;
         }
 
-        AddRow(col, "파일 생성 시간", s.FormatLastModified(), scale, sz);
-        AddRow(col, "파일 크기", s.FormatSize(), scale, sz);
+        AddRow(col, "File Creation Time", s.FormatLastModified(), scale, sz);
+        AddRow(col, "File Size", s.FormatSize(), scale, sz);
 
         if (s.ParseSucceeded)
         {
-            AddRow(col, "총 플레이타임", s.FormatPlaytime(), scale, sz);
+            AddRow(col, "Total Playtime", s.FormatPlaytime(), scale, sz);
             // Issue #7: replaced "캐릭터 N명" (progress.save accumulator with
             // little signal during conflict resolution) with the in-progress
             // run indicator so the user can see exactly which side has the
             // active run before choosing KeepLocal/KeepCloud. "—" when no
             // current_run exists keeps the row position stable across cards.
-            AddRow(col, "현재 진행", s.FormatCurrentRun(), scale, sz);
-            AddRow(col, "전적", $"{s.TotalWins}승 / {s.TotalLosses}패", scale, sz);
+            AddRow(col, "Current Run", s.FormatCurrentRun(), scale, sz);
+            AddRow(col, "Record", $"{s.TotalWins}W / {s.TotalLosses}L", scale, sz);
             if (s.MaxAscension > 0)
-                AddRow(col, "최고 승천", $"{s.MaxAscension}", scale, sz);
+                AddRow(col, "Max Ascension", $"{s.MaxAscension}", scale, sz);
             if (s.FloorsClimbed > 0)
-                AddRow(col, "올라간 층", $"{s.FloorsClimbed:N0}", scale, sz);
+                AddRow(col, "Floors Climbed", $"{s.FloorsClimbed:N0}", scale, sz);
             if (s.RelicsDiscovered > 0)
-                AddRow(col, "발견 유물", $"{s.RelicsDiscovered}", scale, sz);
+                AddRow(col, "Relics Discovered", $"{s.RelicsDiscovered}", scale, sz);
         }
         else if (s.HasCurrentRun)
         {
             // progress.save unparseable but a current run exists — still show
             // the run indicator since that's the most important signal.
-            AddRow(col, "현재 진행", s.FormatCurrentRun(), scale, sz);
+            AddRow(col, "Current Run", s.FormatCurrentRun(), scale, sz);
         }
         else if (!s.IsEmpty)
         {
             // Schema parse failed but file has content — still useful to show.
             var note = new StyledLabel(
-                "(상세 통계를 읽지 못함 — 파일은 존재함)",
+                "(Failed to read detailed stats — file exists)",
                 scale,
                 fontSize: sz.SubtitleFs,
                 align: HorizontalAlignment.Left

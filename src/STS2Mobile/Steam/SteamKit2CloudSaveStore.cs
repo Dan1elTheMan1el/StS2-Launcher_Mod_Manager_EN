@@ -190,20 +190,20 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         EnqueueCloudRemove(canonPath, "Delete");
     }
 
-    // issue #81 — 게임의 클라우드 히스토리 캡을 모바일에서 실제로 작동시킨다.
-    // MegaCrit.Sts2.Core.Saves.Managers.RunHistorySaveManager(maxCloudFileCount=100)는
-    // run 을 쓰기 전 CloudSaveStore.ForgetFilesInDirectoryBeforeWritingIfNecessary(.., 5MB, 100)
-    // 를 호출해 오래된 run 을 CloudStore.ForgetFile 로 클라우드에서 덜어낸다. 기존 구현은
-    //   public void ForgetFile(string p) => _cache.ForgetFile(p);   // 캐시 Persisted=false 만
-    // 즉 실제 Steam 클라우드에는 손대지 않는 no-op 이었다 → 캡이 안 먹혀 클라우드 히스토리가
-    // 무한 누적 → Steam 파일수 쿼터 초과 → ClientBeginFileUpload=LimitExceeded 로 신규
-    // 세이브(progress 포함) 업로드 전멸(issue #81). PC(진짜 Steam)는 ForgetFile=FileForget 이라
-    // 실제로 덜어내 캡이 먹힌다. 여기서 실제 클라우드 제거를 수행해 PC 와 동작을 일치시킨다.
+    // issue #81 — Enables the game's cloud history cap on mobile.
+    // MegaCrit.Sts2.Core.Saves.Managers.RunHistorySaveManager(maxCloudFileCount=100)
+    // calls CloudSaveStore.ForgetFilesInDirectoryBeforeWritingIfNecessary(.., 5MB, 100)
+    // before writing a run to prune old runs from the cloud via CloudStore.ForgetFile. The previous implementation was:
+    //   public void ForgetFile(string p) => _cache.ForgetFile(p);   // cache Persisted=false only
+    // Meaning it was a no-op that didn't actually touch the Steam cloud -> cap didn't work, cloud history
+    // accumulated infinitely -> Steam file count quota exceeded -> ClientBeginFileUpload=LimitExceeded caused new
+    // saves (including progress) upload annihilation (issue #81). PC (real Steam) uses ForgetFile=FileForget,
+    // so it actually prunes and enforces the cap. We perform actual cloud removal here to match PC behavior.
     //
-    // 로컬은 이 CloudStore 가 아니라 별도 GodotFileIo 가 관리하므로 여기서 미접촉 —
-    // 게임이 의도한 "클라우드만 캡, 로컬 run 은 보존" 과 일치한다. (사용자 결정: newest-100
-    // 초과 오래된 run 은 타기기(PC) 로컬로의 삭제 전파도 허용.) 내부 업로드-실패 마킹은
-    // 여전히 _cache.ForgetFile 을 직접 호출하므로 이 공개 메서드 변경의 영향을 받지 않는다.
+    // Local is managed by a separate GodotFileIo rather than this CloudStore, so it is untouched here —
+    // matches the game's intended "cap cloud only, preserve local runs" behavior. (User decision: runs older
+    // than newest-100 are also allowed to propagate deletion to other device (PC) locals.) Internal upload-failure marking
+    // still directly calls _cache.ForgetFile, so it is unaffected by this public method change.
     public void ForgetFile(string path)
     {
         var canonPath = CloudFileCache.CanonicalizePath(path);
@@ -211,9 +211,9 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
         EnqueueCloudRemove(canonPath, "Forget");
     }
 
-    // 클라우드에서만 파일을 제거(ClientDeleteFile). Delete/Forget 공용. 직렬 _writeQueue 로
-    // enqueue 되므로 대량(제보자 백로그) 처리도 1건씩 순차 실행되어 TooManyPending 스로틀을
-    // 자연히 피한다(동시 in-flight 1건).
+    // Removes files from the cloud only (ClientDeleteFile). Common to Delete/Forget. Enqueued via serial _writeQueue
+    // so bulk (reporter backlog) processing is also executed sequentially 1 by 1 to naturally
+    // avoid TooManyPending throttling (1 concurrent in-flight).
     private void EnqueueCloudRemove(string canonPath, string reason)
     {
         _writeQueue.Enqueue(() =>
@@ -286,7 +286,7 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     public int GetFileSize(string path) => _cache.GetFileSize(path);
 
-    // issue #81 계측: enumerate 의 file_sha(다운로드 없는 동일성 판정용). 진단 전용.
+    // issue #81 instrumentation: file_sha for enumerate (for equality determination without downloading). Diagnostics only.
     public string GetFileSha(string path) => _cache.GetSha(path);
 
     public void SetLastModifiedTime(string path, DateTimeOffset time) =>
@@ -296,11 +296,11 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
 
     public bool HasCloudFiles() => _cache.HasCloudFiles();
 
-    // 런처는 LauncherPatches.CloudSyncEnabled==false 면 ConstructDefaultPrefix 에서
-    // SaveManager 를 local-only 로 구성한다. 여기 호출이 들어왔다는 것은 cloud
-    // SaveManager 가 이미 끼워졌다는 뜻이므로 항상 true. false 를 돌리면
-    // SaveManager.ShouldOverwriteCloudWithLocal 가 강제 true 가 되어 로컬을
-    // 클라우드로 덮어쓴다 — issue #4 류 데이터 손실 위험.
+    // If LauncherPatches.CloudSyncEnabled==false, the launcher configures
+    // SaveManager as local-only in ConstructDefaultPrefix. The fact that this call came in means the cloud
+    // SaveManager is already plugged in, so always true. Returning false forces
+    // SaveManager.ShouldOverwriteCloudWithLocal to true, overwriting local
+    // with cloud — risk of data loss like issue #4.
     public bool HasUserEnabledCloudSync() => true;
 
     // The launcher inspects this before deciding whether the cloud-wrapped
@@ -311,7 +311,7 @@ public class SteamKit2CloudSaveStore : ICloudSaveStore, ISaveStore, IDisposable
     public Task<bool> WaitForCacheReadyAsync(int timeoutMs = 15_000) =>
         _cache.WaitForLoadAsync(timeoutMs);
 
-    // ForgetFile 은 위 DeleteFile 근처에 실구현(issue #81) — 여기서는 제거됨.
+    // ForgetFile is actually implemented near DeleteFile above (issue #81) — removed here.
 
     public bool IsFilePersisted(string path) => _cache.IsFilePersisted(path);
 

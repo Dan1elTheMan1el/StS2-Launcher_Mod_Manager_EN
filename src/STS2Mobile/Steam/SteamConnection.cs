@@ -154,7 +154,7 @@ public class SteamConnection : IDisposable
             // problem and send the user down a re-login path for nothing.
             _connectError = IsAuthFailure(cb.Result)
                 ? new InvalidOperationException(
-                    "Steam 로그인이 만료되었거나 취소되었습니다. 다시 로그인해 주세요."
+                    "Steam login has expired or been cancelled. Please log in again."
                 )
                 : new InvalidOperationException($"Login failed: {cb.Result}");
             _connectedGate.Set();
@@ -219,7 +219,9 @@ public class SteamConnection : IDisposable
                 return null;
             }
 
-            PatchHelper.Log("[Issue59] TryRenewRefreshTokenAsync: server issued a new refresh token");
+            PatchHelper.Log(
+                "[Issue59] TryRenewRefreshTokenAsync: server issued a new refresh token"
+            );
             return result.RefreshToken;
         }
         catch (Exception ex)
@@ -447,7 +449,7 @@ public class SteamConnection : IDisposable
         }
     }
 
-    // Fetches an item's change-notes ("업데이트 노트") — the author's dated update
+    // Fetches an item's change-notes ("Update Note") — the author's dated update
     // log — for the detail page. Newest-first as Steam returns it; capped at `count`
     // entries. Returns an empty list when the item has no change history.
     public async Task<List<WorkshopChangeEntry>> GetChangeHistoryAsync(

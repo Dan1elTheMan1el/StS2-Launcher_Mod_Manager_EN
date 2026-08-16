@@ -83,11 +83,11 @@ public class BackupRestorePickerDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(14 * scale));
         dialogBox.AddChild(vbox);
 
-        var title = new StyledLabel("백업 복원", scale, fontSize: sz.TitleFs);
+        var title = new StyledLabel("Restore Backup", scale, fontSize: sz.TitleFs);
         vbox.AddChild(title);
 
         var hint = new StyledLabel(
-            "복원할 로컬 백업 시점을 선택하세요. 현재 상태는 복원 직전에 자동 백업됩니다.",
+            "Select a local backup point to restore. The current state will be automatically backed up right before restoration.",
             scale,
             fontSize: sz.HintFs
         );
@@ -115,7 +115,7 @@ public class BackupRestorePickerDialog : ColorRect
         vbox.AddChild(buttonRow);
 
         var closeButton = new StyledButton(
-            "닫기",
+            "Close",
             scale,
             fontSize: sz.CloseFs,
             height: sz.CloseHeight
@@ -186,7 +186,7 @@ public class BackupRestorePickerDialog : ColorRect
         textCol.AddChild(titleLabel);
 
         var subtitleLabel = new StyledLabel(
-            $"{snap.FileCount}개 · {LauncherModel.FormatSize(snap.TotalBytes)}",
+            $"{snap.FileCount} files · {LauncherModel.FormatSize(snap.TotalBytes)}",
             scale,
             fontSize: sz.RowSubtitleFs,
             align: HorizontalAlignment.Left
@@ -233,10 +233,13 @@ public class BackupRestorePickerDialog : ColorRect
     private static (string text, Color color) DescribeKind(string kind) =>
         kind switch
         {
-            "manual" => ("수동", new Color(0.4f, 0.6f, 0.85f)),
-            "auto-match" => ("자동 · 일치", new Color(0.3f, 0.75f, 0.5f)),
-            "auto-conflict-kept" => ("자동 · 충돌(유지)", new Color(0.3f, 0.75f, 0.5f)),
-            "auto-conflict-discarded" => ("자동 · 충돌(폐기)", new Color(0.6f, 0.6f, 0.6f)),
+            "manual" => ("Manual", new Color(0.4f, 0.6f, 0.85f)),
+            "auto-match" => ("Auto · Match", new Color(0.3f, 0.75f, 0.5f)),
+            "auto-conflict-kept" => ("Auto · Conflict (Kept)", new Color(0.3f, 0.75f, 0.5f)),
+            "auto-conflict-discarded" => (
+                "Auto · Conflict (Discarded)",
+                new Color(0.6f, 0.6f, 0.6f)
+            ),
             _ => (kind ?? "—", new Color(0.6f, 0.6f, 0.6f)),
         };
 }

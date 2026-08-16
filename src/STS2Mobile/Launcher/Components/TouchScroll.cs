@@ -12,7 +12,7 @@ namespace STS2Mobile.Launcher.Components;
 //     under an open modal need this explicit gate to ignore drags.
 //   • Android Back — TryHandleBack closes the top-most modal FIRST, so Back
 //     always dismisses detail pages/dialogs before any hub-close or app-exit
-//     handling (user-requested priority: 모달 닫기 > 허브 닫기 > 앱 종료).
+//     handling (user-requested priority: close modal > close hub > exit app).
 public static class ModalGate
 {
     private class Entry

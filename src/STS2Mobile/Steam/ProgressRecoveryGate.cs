@@ -21,8 +21,8 @@ namespace STS2Mobile.Steam;
 // touching the cloud store or showing anything.
 public static class ProgressRecoveryGate
 {
-    // Latches true on user confirmation and never resets — "그 세션은 이후
-    // 재질문 없음" (per spec). A decline does NOT set this: it only skips the
+    // Latches true on user confirmation and never resets — "No more questions
+    // for that session" (per spec). A decline does NOT set this: it only skips the
     // one push that triggered it, so the next opportunity asks again.
     private static volatile bool _confirmedThisSession;
 
@@ -116,11 +116,11 @@ public static class ProgressRecoveryGate
         try
         {
             var dialog = new StyledDialog(
-                "이번 세션은 세이브를 복구 모드로 열었습니다(게임 버전 차이). "
-                    + "로컬을 클라우드로 덮으시겠습니까?",
+                "This session opened the save in recovery mode (game version difference). "
+                    + "Would you like to overwrite local to cloud?",
                 scale,
-                okLabel: "덮어쓰기",
-                cancelLabel: "취소"
+                okLabel: "Overwrite",
+                cancelLabel: "Cancel"
             );
             // Above CloudConflictDialog (200) since this can appear mid
             // pre-PLAY handshake, stacked over that dialog's own

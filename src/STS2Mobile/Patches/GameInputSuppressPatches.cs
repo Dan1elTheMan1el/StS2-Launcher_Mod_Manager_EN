@@ -12,7 +12,7 @@ namespace STS2Mobile.Patches;
 // NHotkeyManager._UnhandledInput, which ran game-side back/hotkey logic while
 // the launcher owned the screen ("Dev console used before being created" spam,
 // then the game tore down its node tree — taking the launcher, and the open Mod
-// Hub, with it: "창이 아예 사라짐").
+// Hub, with it: "The window completely disappears").
 //
 // While LauncherUI.LauncherActive, both handlers are skipped entirely: no game
 // hotkey/debug-key/back processing can run under the launcher. Normal behaviour

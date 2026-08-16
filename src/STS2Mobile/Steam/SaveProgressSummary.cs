@@ -31,7 +31,7 @@ public class SaveProgressSummary
 
     // Augmented from current_run.save when a run is in progress. CurrentRunAct
     // and CurrentRunFloor follow the game's own UI convention — what the user
-    // sees as "1막 3층" maps to Act=1, Floor=3 (next-floor / floors-climbed-in-act
+    // sees as "Act 1 Floor 3" maps to Act=1, Floor=3 (next-floor / floors-climbed-in-act
     // + 1). When no current_run.save exists or it parses empty, HasCurrentRun
     // stays false and the dialog renders "—".
     public bool HasCurrentRun { get; private set; }
@@ -42,7 +42,7 @@ public class SaveProgressSummary
 
     // Identifies which profile this summary represents — the dialog renders
     // it as a small subtitle under the card title so the user understands why
-    // a profile with empty stats can show up (e.g. "(프로필 3)" when an
+    // a profile with empty stats can show up (e.g. "(Profile 3)" when an
     // in-progress run on a fresh slot is the conflict trigger, while the rich
     // accumulator data lives on profile1). Set by CloudSyncDecisions.BuildSummary.
     public int ProfileNumber { get; set; }
@@ -53,8 +53,8 @@ public class SaveProgressSummary
         {
             if (ProfileNumber <= 0)
                 return null;
-            var moddedTag = IsModded ? " · 모드" : "";
-            return $"프로필 {ProfileNumber}{moddedTag}";
+            var moddedTag = IsModded ? " · Modded" : "";
+            return $"Profile {ProfileNumber}{moddedTag}";
         }
     }
 
@@ -197,7 +197,7 @@ public class SaveProgressSummary
 
             CurrentRunAct = act;
             // Show the floor the player is about to enter (or just entered) —
-            // matches the game's "1막 N층" indicator. Cleared 2 nodes ⇒ "3층".
+            // matches the game's "Act N Floor M" indicator. Cleared 2 nodes ⇒ "Floor 3".
             CurrentRunFloor = floorInAct + 1;
             HasCurrentRun = true;
         }
@@ -207,12 +207,12 @@ public class SaveProgressSummary
         }
     }
 
-    // Convenience formatter for the dialog — "1막 3층" or "—".
+    // Convenience formatter for the dialog — "Act 1 Floor 3" or "—".
     public string FormatCurrentRun()
     {
         if (!HasCurrentRun)
             return "—";
-        return $"{CurrentRunAct}막 {CurrentRunFloor}층";
+        return $"Act {CurrentRunAct} Floor {CurrentRunFloor}";
     }
 
     // "Xh Ym" format. Handles 0 cleanly; no seconds shown to keep the dialog tidy.

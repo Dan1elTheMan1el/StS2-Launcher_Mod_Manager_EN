@@ -5,7 +5,7 @@ using MegaCrit.Sts2.Core.Saves;
 
 namespace STS2Mobile.Steam;
 
-// issue #64 — profile slot clone ("프로필 복제"). Overwrites one (profile ×
+// issue #64 — profile slot clone ("profile clone"). Overwrites one (profile ×
 // modded) slot's save files with another's, entirely local (no cloud I/O —
 // the caller decides separately whether to push the result; see
 // LauncherPatches.ApplyChosenSideForSlotAsync). Frozen contract:
@@ -89,13 +89,13 @@ public static class ProfileCopyService
                 return new ProfileCopyResult
                 {
                     Success = false,
-                    Error = "원본과 대상 슬롯이 동일합니다.",
+                    Error = "The source and destination slots are the same.",
                 };
             }
 
             PatchHelper.Log(
-                $"{Tag} CopyProfile: start profile{srcProfile}{(srcModded ? "(모드)" : "")} "
-                    + $"-> profile{dstProfile}{(dstModded ? "(모드)" : "")}"
+                $"{Tag} CopyProfile: start profile{srcProfile}{(srcModded ? "(mod)" : "")} "
+                    + $"-> profile{dstProfile}{(dstModded ? "(mod)" : "")}"
             );
 
             var backup = LocalBackupService.BackupNow();
@@ -205,7 +205,8 @@ public static class ProfileCopyService
                     TotalBytes = totalBytes,
                     BackupPath = backup.DestPath,
                     CurrentRunExcluded = excludeCurrentRun,
-                    Error = $"일부 파일 복사 실패: {failedNames}. 사전 백업: {backup.DestPath}",
+                    Error =
+                        $"Failed to copy some files: {failedNames}. Pre-backup: {backup.DestPath}",
                 };
             }
 
@@ -321,9 +322,7 @@ public static class ProfileCopyService
         }
         catch (Exception ex)
         {
-            PatchHelper.Log(
-                $"{Tag} CopyProfile: copy failed {srcPath} -> {dstPath}: {ex.Message}"
-            );
+            PatchHelper.Log($"{Tag} CopyProfile: copy failed {srcPath} -> {dstPath}: {ex.Message}");
             failedPaths.Add(srcPath);
         }
     }

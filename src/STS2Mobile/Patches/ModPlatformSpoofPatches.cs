@@ -100,7 +100,9 @@ public static class ModPlatformSpoofPatches
                 return true;
 
             __result = true;
-            PatchHelper.Log($"[ModGuard] Spoofed OperatingSystem.IsWindows()=true for mod '{modCaller}'");
+            PatchHelper.Log(
+                $"[ModGuard] Spoofed OperatingSystem.IsWindows()=true for mod '{modCaller}'"
+            );
             return false;
         }
         catch

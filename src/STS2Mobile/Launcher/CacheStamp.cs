@@ -9,9 +9,9 @@ namespace STS2Mobile.Launcher;
 
 // Records branch/buildId/commit/version of the most recently downloaded game
 // payload. Written by LauncherModel after a successful download. Kept around
-// for diagnostics and future mismatch-detection use cases — issue #5 의 진짜
-// root cause 는 .NET assembly 동기화 (GodotApp.setupAssemblies) 라 PLAY 시점
-// stamp 비교는 v0.3.18 에서 제거됨. 메타데이터로만 유지.
+// for diagnostics and future mismatch-detection use cases — the true
+// root cause of issue #5 was .NET assembly synchronization (GodotApp.setupAssemblies), so
+// stamp comparison at PLAY time was removed in v0.3.18. Kept only as metadata.
 public class CacheStamp
 {
     [JsonPropertyName("branch")]

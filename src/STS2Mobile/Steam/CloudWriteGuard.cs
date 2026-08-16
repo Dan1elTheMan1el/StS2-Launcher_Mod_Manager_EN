@@ -73,7 +73,7 @@ public static class CloudWriteGuard
         {
             bool newIsEmpty = newByteLength <= EmptyByteThreshold;
             if (!newIsEmpty)
-                return false; // Real content — never blocked (오탐 0).
+                return false; // Real content — never blocked (0 false positives).
 
             if (cache == null)
                 return false; // No cache to consult — fail open.
@@ -84,8 +84,8 @@ public static class CloudWriteGuard
             if (!cache.IsLoaded)
             {
                 reason =
-                    $"빈 내용({newByteLength} bytes) 쓰기를 차단했습니다. "
-                    + "클라우드 상태를 아직 확인하지 못해 안전을 위해 보류합니다.";
+                    $"Blocked writing empty content ({newByteLength} bytes). "
+                    + "Cloud status could not be verified yet, holding off for safety.";
                 PatchHelper.Log($"{Tag} BLOCK(cache-not-loaded) {canonPath}: new={newByteLength}B");
                 return true;
             }
@@ -106,8 +106,8 @@ public static class CloudWriteGuard
             }
 
             reason =
-                $"빈 내용({newByteLength} bytes)이 클라우드의 기존 저장({cloudSize} bytes)을 "
-                + "덮어쓰려 해 차단했습니다.";
+                $"Blocked because empty content ({newByteLength} bytes) attempted to "
+                + $"overwrite existing cloud save ({cloudSize} bytes).";
             PatchHelper.Log(
                 $"{Tag} BLOCK(empty-overwrite) {canonPath}: new={newByteLength}B cloud={cloudSize}B"
             );
@@ -171,9 +171,10 @@ public static class CloudWriteGuard
             }
             catch (JsonException ex)
             {
-                reason = "세이브 파일이 불완전(손상)해 클라우드 업로드를 보류했습니다.";
+                reason =
+                    "Cloud upload was held off because the save file is incomplete (corrupted).";
                 PatchHelper.Log(
-                    $"{CorruptTag} BLOCK(corrupt-json) {canonPath}: {bytes.Length}B parse실패: {ex.Message}"
+                    $"{CorruptTag} BLOCK(corrupt-json) {canonPath}: {bytes.Length}B parse failed: {ex.Message}"
                 );
                 return true;
             }
@@ -255,7 +256,7 @@ public static class CloudWriteGuard
                 SyncDecision.Identical,
                 vh,
                 customSubtitle: reason,
-                customTitle: "세이브 보호 — 클라우드 덮어쓰기 차단"
+                customTitle: "Save Protection — Cloud Overwrite Blocked"
             );
             parent.AddChild(dialog);
             PatchHelper.Log($"{Tag} notified user for {canonPath}");

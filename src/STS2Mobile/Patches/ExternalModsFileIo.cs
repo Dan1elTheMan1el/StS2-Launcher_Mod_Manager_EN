@@ -227,7 +227,9 @@ public class ExternalModsFileIo : IModManagerFileIo
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Mods] CopyFile({src ?? sourcePath} -> {dst ?? destinationPath}) failed: {ex.Message}");
+            PatchHelper.Log(
+                $"[Mods] CopyFile({src ?? sourcePath} -> {dst ?? destinationPath}) failed: {ex.Message}"
+            );
             return Godot.Error.Failed;
         }
     }

@@ -45,14 +45,18 @@ public class BackupResultDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(14 * scale));
         dialogBox.AddChild(vbox);
 
-        var title = new StyledLabel(success ? "백업 완료" : "백업 실패", scale, fontSize: 20);
+        var title = new StyledLabel(
+            success ? "Backup Complete" : "Backup Failed",
+            scale,
+            fontSize: 20
+        );
         vbox.AddChild(title);
 
         if (success)
         {
-            AddRow(vbox, "백업된 파일", $"{fileCount}개", scale);
+            AddRow(vbox, "Backed Up Files", $"{fileCount} files", scale);
             if (totalBytes > 0)
-                AddRow(vbox, "총 크기", LauncherModel.FormatSize(totalBytes), scale);
+                AddRow(vbox, "Total Size", LauncherModel.FormatSize(totalBytes), scale);
             if (!string.IsNullOrEmpty(backupPath))
             {
                 // Full path is long; show it on its own wrapped line so the
@@ -66,7 +70,7 @@ public class BackupResultDialog : ColorRect
                 pathLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
                 pathLabel.CustomMinimumSize = new Vector2((int)(420 * scale), 0);
                 pathLabel.Modulate = new Color(1, 1, 1, 0.7f);
-                vbox.AddChild(MakeKeyLabel("저장 위치", scale));
+                vbox.AddChild(MakeKeyLabel("Save Location", scale));
                 vbox.AddChild(pathLabel);
             }
         }
@@ -74,7 +78,7 @@ public class BackupResultDialog : ColorRect
         {
             var reason = new StyledLabel(
                 string.IsNullOrEmpty(failureReason)
-                    ? "백업 중 오류가 발생했습니다."
+                    ? "An error occurred during backup."
                     : failureReason,
                 scale,
                 fontSize: 14
@@ -89,7 +93,7 @@ public class BackupResultDialog : ColorRect
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
 
-        var okButton = new StyledButton("확인", scale, fontSize: 14, height: 44);
+        var okButton = new StyledButton("OK", scale, fontSize: 14, height: 44);
         okButton.CustomMinimumSize = new Vector2((int)(140 * scale), okButton.CustomMinimumSize.Y);
         okButton.Pressed += () =>
         {

@@ -57,7 +57,7 @@ public class SyncDecisionResult
     // Total number of (profile × modded) slots that differ between local and
     // cloud. The dialog renders only ONE profile's stats but ApplyChosenSide
     // pushes/pulls every diff. This counter lets the dialog flag the rest:
-    // "프로필 3 (외 K개 차이)". 0 when there's no conflict at all.
+    // "Profile 3 (and K others differ)". 0 when there's no conflict at all.
     public int DiffSlotCount { get; init; }
 
     // Set only by DeterminePerProfileAsync — identifies which single (profile ×
@@ -295,7 +295,7 @@ public static class CloudSyncDecisions
     // "ghost slot hijacking" bug — a 1.5KB unmodded profile2 stub no longer
     // hides a 228KB modded profile1 conflict; both show up as separate rows.
     // Ordered profile-major (profile1 unmodded/modded, then profile2, ...) to
-    // match how the user thinks about "프로필 N" — DetermineAsync keeps its own
+    // match how the user thinks about "Profile N" — DetermineAsync keeps its own
     // modded-major loop order since that's unobserved (aggregate only).
     public static async Task<List<SyncDecisionResult>> DeterminePerProfileAsync(
         ISaveStore local,
@@ -711,7 +711,7 @@ public static class CloudSyncDecisions
             // Don't collapse this to an empty (RawSize=0) summary — the cache
             // already told us this file is progressSize bytes, we just failed
             // to fetch its content. Reporting RawSize=0 here is exactly what
-            // used to render as "Steam Cloud 비어있음", which is false and (if
+            // used to render as "Steam Cloud Empty", which is false and (if
             // acted on) would push local over a cloud copy we never read.
             // FromContent with empty content + the real cached size produces a
             // ParseSucceeded=false summary that IsEmpty correctly reports as

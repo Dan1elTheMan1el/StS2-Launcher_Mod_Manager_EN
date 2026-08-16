@@ -43,9 +43,7 @@ public static class ControllerMapRefillPatches
     {
         var asm = typeof(MegaCrit.Sts2.Core.Nodes.NGame).Assembly;
 
-        var inputManagerType = asm.GetType(
-            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager"
-        );
+        var inputManagerType = asm.GetType("MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager");
         if (inputManagerType == null)
         {
             PatchHelper.Log("FAILED ControllerMapRefillPatches: NInputManager type not found");

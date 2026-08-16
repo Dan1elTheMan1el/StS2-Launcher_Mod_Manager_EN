@@ -33,7 +33,9 @@ public static class ModExceptionAttributionPatches
             var target = AccessTools.Method(type, "LogException");
             if (target == null)
             {
-                PatchHelper.Log("[ModGuard] ExceptionUtils.LogException not found — observer skipped");
+                PatchHelper.Log(
+                    "[ModGuard] ExceptionUtils.LogException not found — observer skipped"
+                );
             }
             else
             {
@@ -44,7 +46,9 @@ public static class ModExceptionAttributionPatches
                         nameof(LogExceptionPostfix)
                     )
                 );
-                PatchHelper.Log("[ModGuard] Exception observer installed (ExceptionUtils.LogException)");
+                PatchHelper.Log(
+                    "[ModGuard] Exception observer installed (ExceptionUtils.LogException)"
+                );
             }
         }
         catch (Exception ex)
@@ -135,10 +139,7 @@ public static class ModExceptionAttributionPatches
                 // Signal 1: the throwing frame IS mod code.
                 var asm = method.DeclaringType?.Assembly ?? method.Module?.Assembly;
                 if (asm != null && ModAssemblyRegistry.IsModAssembly(asm))
-                    return (
-                        asm.GetName().Name,
-                        $"in {method.DeclaringType?.Name}.{method.Name}"
-                    );
+                    return (asm.GetName().Name, $"in {method.DeclaringType?.Name}.{method.Name}");
 
                 // Signal 2: the frame is a Harmony-patched method — map back to
                 // the original and see whether a mod owns any patch on it.

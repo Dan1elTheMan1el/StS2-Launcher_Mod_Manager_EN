@@ -108,7 +108,7 @@ public class GodotApp extends GodotActivity {
 			startLogcatCaptureInternal();
 		}
 
-		// Issue #11 진단 — 보고자 단말 분리용. 제조사/모델/Android/펌웨어 빌드 ID 1줄.
+		// Issue #11 Diagnosis — For isolating reporter devices. Manufacturer/Model/Android/Firmware build ID 1 line.
 		Log.i(TAG, "[Diag/Fold] device=" + Build.MANUFACTURER + "/" + Build.MODEL
 				+ " android=" + Build.VERSION.RELEASE + " sdk=" + Build.VERSION.SDK_INT
 				+ " build=" + Build.DISPLAY);
@@ -130,7 +130,7 @@ public class GodotApp extends GodotActivity {
 
 		// Issue #23 — atlas cache invalidation. Two trigger paths:
 		//   1) Auto: PCK mtime changed since the last recorded stamp (game update).
-		//   2) Manual: .atlas_wipe_pending marker dropped by the [이미지 캐시 정리]
+		//   2) Manual: .atlas_wipe_pending marker dropped by the [Image Cache Cleanup]
 		//      UI button or the debug_atlas_wipe intent.
 		// Either path wipes etc2_cache/.godot/imported/ (the mobile-specific
 		// compressed-texture cache). Without this, atlas frame indexes that
@@ -343,7 +343,7 @@ public class GodotApp extends GodotActivity {
 		root.addView(spinner, spinnerLp);
 
 		TextView title = new TextView(this);
-		title.setText("이미지 인덱스 캐시를 다시 만드는 중입니다");
+		title.setText("Rebuilding image index cache");
 		title.setTextColor(0xFFFFFFFF);
 		title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
 		title.setGravity(Gravity.CENTER);
@@ -355,10 +355,10 @@ public class GodotApp extends GodotActivity {
 
 		TextView desc = new TextView(this);
 		desc.setText(
-				"게임 업데이트가 감지되어 모바일용 텍스처 캐시를\n"
-				+ "새 빌드 기준으로 재생성합니다.\n"
-				+ "첫 실행은 30~60초 소요되며 다음부터는 정상 속도입니다.\n\n"
-				+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.");
+				"Game update detected, regenerating mobile texture cache\n"
+				+ "based on the new build.\n"
+				+ "First launch takes 30~60 seconds, normal speed thereafter.\n\n"
+				+ "Saves / progress / login info will be preserved.");
 		desc.setTextColor(0xFFCCCCCC);
 		desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
 		desc.setGravity(Gravity.CENTER);
@@ -560,13 +560,13 @@ public class GodotApp extends GodotActivity {
 
 		boolean versionChanged = isNewVersion();
 
-		// Issue #44 v2: 옛 early-return ("sts2Marker.exists() && !versionChanged → return") 은
-		// issue #5 의 file-by-file size+mtime 비교(아래 루프)를 dead-code 화시켰다. launcher APK
-		// versionCode 가 안 바뀌면 게임 PCK 가 새 버전으로 업데이트돼도 dst 의 dll 이 영원히
-		// stale 로 남았음 (예: v0.107.0 PCK + v0.106 dll 캐시 → issue #42/#43 의 마스킹 원인).
-		// 매 부팅마다 BCL 재복사(stream copy, ~10MB) + 게임 측 dll size+mtime 비교 후 변경된
-		// 것만 복사. BCL 은 bclNames 가드(line ~640) 로 보호되어 게임 측 desktop CoreCLR BCL 이
-		// 덮어쓰지 않도록 안전.
+		// Issue #44 v2: The old early-return ("sts2Marker.exists() && !versionChanged → return")
+		// made the file-by-file size+mtime comparison (loop below) dead code. If the launcher APK
+		// versionCode didn't change, even if the game PCK updated to a new version, the dlls in dst remained
+		// stale forever (e.g., v0.107.0 PCK + v0.106 dll cache → root cause of masking in issue #42/#43).
+		// Re-copy BCL on every boot (stream copy, ~10MB) + compare game-side dll size+mtime and copy only
+		// changed ones. BCL is protected by the bclNames guard (~line 640) so the game-side desktop CoreCLR BCL
+		// won't overwrite it safely.
 		destDir.mkdirs();
 
 		if (versionChanged) {
@@ -618,20 +618,20 @@ public class GodotApp extends GodotActivity {
 				if (name.endsWith(".so")) {
 					continue;
 				}
-				// CRITICAL: depot 의 game assembly 디렉토리에는 desktop CoreCLR
-				// 버전의 System.*, mscorlib 같은 BCL dll 이 들어있음. 이것들은
-				// Android Mono 와 호환되지 않으므로 absolutely 덮어쓰면 안 됨.
-				// (System.Diagnostics.MonoStackFrame not found → Mono 부팅 실패)
+				// CRITICAL: The depot's game assembly directory contains desktop CoreCLR
+				// versions of BCL dlls like System.*, mscorlib. Since these are
+				// not compatible with Android Mono, they must absolutely not be overwritten.
+				// (System.Diagnostics.MonoStackFrame not found → Mono boot failure)
 				if (bclNames.contains(name)) {
 					bclProtected++;
 					continue;
 				}
 				File dest = new File(destDir, name);
-				// Issue #5 진짜 root cause: 이전에는 dest.exists() 면 무조건 skip
-				// 이라 게임이 update 되어 src 의 sts2.dll 이 새 버전으로 갱신돼도
-				// dest 의 옛 dll 이 그대로 남아 NCard.cs 가 새 .tscn 의
-				// %AncientHighlight 같은 노드를 못 찾는 mismatch 발생.
-				// BCL 충돌 방지 후 size+mtime 으로 동기화 여부 판단해 다르면 덮어쓰기.
+				// Issue #5 True root cause: Previously, if dest.exists() it always skipped,
+				// so even if the game updated and src's sts2.dll was renewed to a new version,
+				// dest's old dll remained as-is, causing a mismatch where NCard.cs couldn't find
+				// nodes like %AncientHighlight in the new .tscn.
+				// After preventing BCL conflicts, determine synchronization status via size+mtime and overwrite if different.
 				if (dest.exists()
 						&& dest.length() == src.length()
 						&& dest.lastModified() >= src.lastModified()) {
@@ -823,9 +823,9 @@ public class GodotApp extends GodotActivity {
 		Runtime.getRuntime().exit(0);
 	}
 
-	// Issue #45: 브랜치 전환 후 PCK/dll mismatch 회피를 위한 명시적 process exit.
-	// 사용자가 launcher 아이콘 재탭 시 onCreate → setupAssemblies 가 새 dll 로 dst 갱신
-	// (issue #44 의 (2) per-file 비교) → 정상 부팅.
+	// Issue #45: Explicit process exit to avoid PCK/dll mismatch after branch switching.
+	// When the user retaps the launcher icon, onCreate → setupAssemblies refreshes dst with new dlls
+	// (per-file comparison in issue #44 (2)) → normal boot.
 	public void exitApp() {
 		Log.i(TAG, "[exitApp] User-initiated restart — finishing affinity and exiting process");
 		runOnUiThread(() -> {

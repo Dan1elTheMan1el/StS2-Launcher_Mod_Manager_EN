@@ -24,9 +24,9 @@ public class LauncherController
     private bool _lastShowCloudSync;
     private bool _lastShowUpdate;
 
-    // Issue #45: OnCheckGameUpdatePressed 의 picked != current 분기 통과 시 true
-    // 로 마킹, DownloadCompleted 콜백에서 소비. true 였다면 NeedsRestartAfterBranchSwitch
-    // set → Play 버튼이 "앱 재시작 필요" 로 분기됨.
+    // Issue #45: Marked true when passing picked != current branch check in OnCheckGameUpdatePressed,
+    // consumed in DownloadCompleted callback. If true, sets NeedsRestartAfterBranchSwitch
+    // → Play button text branches to "App restart required".
     private bool _pendingBranchSwitch;
 
     // Reentrancy guard shared by every handler that touches local saves or
@@ -84,8 +84,8 @@ public class LauncherController
                 bool wasBranchSwitch = _pendingBranchSwitch;
                 _view.SetStatus("Download complete! Restart to play.");
                 _view.Download.Visible = false;
-                // Issue #45: 브랜치 전환 직후 다운로드 완료라면 dst dll 과 mismatch
-                // 위험 — Play 가 아니라 명시적 재시작이 유일한 안전 경로.
+                // Issue #45: If download completes right after a branch switch, there is a risk of
+                // mismatch with dst dll — explicit restart rather than Play is the only safe path.
                 if (_pendingBranchSwitch)
                 {
                     _pendingBranchSwitch = false;
@@ -95,12 +95,12 @@ public class LauncherController
                     );
                 }
 
-                // Issue #53: 인세션 same-branch 업데이트가 게임 PCK 로 부팅된 상태에서
-                // 완료되면 프로세스는 구 sts2.dll, 디스크는 새 PCK — in-process PLAY 시
-                // 구 어셈블리/신 PCK 혼합. 브랜치 전환은 위에서 처리되므로 여기선 순수
-                // 업데이트만: 실제로 게임 PCK 로 부팅됐고(InGameMode) 어셈블리가 실제로
-                // 교체된 경우에만 자동 재시작. 첫 설치(bootstrap, InGameMode=false)는
-                // 기존 RESTART APP 플로우 유지.
+                // Issue #53: If an in-session same-branch update completes while booted into the game PCK,
+                // the process is the old sts2.dll and the disk is the new PCK — mixing old assembly/new PCK
+                // on in-process PLAY. Branch switches are handled above, so here we do pure
+                // updates: auto-restart only if actually booted into the game PCK (InGameMode) and
+                // the assembly was actually replaced. First installation (bootstrap, InGameMode=false)
+                // keeps the existing RESTART APP flow.
                 if (!wasBranchSwitch && _model.InGameMode && LauncherModel.GameAssemblyReplaced())
                 {
                     PatchHelper.Log(
@@ -221,7 +221,7 @@ public class LauncherController
         {
             case FastPathResult.ReadyToLaunch:
                 // issue #59 — expired saved token: a boot-time choice dialog
-                // (재로그인 vs 오프라인 계속), exactly once per app launch since
+                // (re-login vs continue offline), exactly once per app launch since
                 // the fast path runs once. An earlier draft revealed the login
                 // form next to the launch stage instead, but the login form
                 // has no PLAY button — the mixed stage read as broken UI
@@ -236,7 +236,7 @@ public class LauncherController
                 }
                 _view.SetStatus(
                     _model.SavedTokenExpiringSoon
-                        ? $"Welcome back, {_model.AccountName} (Steam 로그인 곧 만료 — 재로그인 권장)"
+                        ? $"Welcome back, {_model.AccountName} (Steam login expiring soon — re-login recommended)"
                         : $"Welcome back, {_model.AccountName}"
                 );
                 var text = ResolveLaunchButtonText();
@@ -289,7 +289,7 @@ public class LauncherController
 
     // Debug-only: GodotApp.java drops marker files when started with
     // `adb shell am start --es debug_force_<dialog> 1` (only on -debug builds).
-    // Convert them into real dialog calls so we can verify UI / Korean copy /
+    // Convert them into real dialog calls so we can verify UI / English copy /
     // marker extraction without round-tripping through GitHub or Steam.
     private void DispatchDebugIntents()
     {
@@ -623,9 +623,9 @@ public class LauncherController
                 return;
             }
             _model.WipeGameFiles();
-            // Issue #45: 사용자가 곧 이어 DOWNLOAD 버튼을 누를 것이고, 다운 완료 시
-            // PCK 가 in-process 갱신되어 dst dll 과 mismatch. 다운로드 완료 callback
-            // 이 이 플래그를 보고 NeedsRestartAfterBranchSwitch 를 set 한다.
+            // Issue #45: The user will soon press the DOWNLOAD button, and upon download completion
+            // the PCK is updated in-process, causing a mismatch with dst dll. The download completed callback
+            // sees this flag and sets NeedsRestartAfterBranchSwitch.
             _pendingBranchSwitch = true;
             _runOnMainThread(() =>
             {
@@ -862,12 +862,12 @@ public class LauncherController
     private void ShowAtlasWipeConfirm()
     {
         _view.ShowConfirmation(
-            "이미지 인덱스 캐시 정리\n\n"
-                + "포션 / 카드 / 유물 등 이미지가 잘못 표시될 때 사용하세요.\n"
-                + "게임 텍스처 캐시(약 660개) 를 삭제하고 앱을 재시작합니다.\n\n"
-                + "* 다음 실행이 30~60초 더 걸립니다 (재import)\n"
-                + "* 게임을 다시 다운로드하지 않습니다\n"
-                + "* 세이브 / 진행도 / 로그인 정보는 보존됩니다",
+            "Clear Image Index Cache\n\n"
+                + "Use this when potions, cards, relics, etc., are displayed incorrectly.\n"
+                + "Deletes the game texture cache (~660 items) and restarts the app.\n\n"
+                + "* The next launch will take 30-60 seconds longer (re-import)\n"
+                + "* Game files will not be re-downloaded\n"
+                + "* Saves / progress / login info are preserved",
             onConfirmed: () =>
             {
                 try
@@ -934,16 +934,16 @@ public class LauncherController
         {
             AppPaths.RequestStoragePermission();
             _view.ShowConfirmation(
-                "백업하려면 저장공간 접근 권한이 필요합니다.\n권한을 허용한 뒤 다시 시도하세요.",
+                "Storage access permission is required to back up.\nPlease grant the permission and try again.",
                 onConfirmed: null,
-                okLabel: "확인",
-                cancelLabel: "닫기"
+                okLabel: "OK",
+                cancelLabel: "Close"
             );
             return;
         }
 
         ShowConfirmation(
-            "현재 세이브 데이터를 로컬에 백업할까요?",
+            "Do you want to back up current save data locally?",
             () =>
             {
                 if (_cloudOpInProgress)
@@ -972,10 +972,10 @@ public class LauncherController
                                 AppPaths.RequestStoragePermission();
                                 _view.AppendLog("Local backup needs storage permission.");
                                 _view.ShowConfirmation(
-                                    "백업하려면 저장공간 접근 권한이 필요합니다.\n권한을 허용한 뒤 다시 시도하세요.",
+                                    "Storage access permission is required to back up.\nPlease grant the permission and try again.",
                                     onConfirmed: null,
-                                    okLabel: "확인",
-                                    cancelLabel: "닫기"
+                                    okLabel: "OK",
+                                    cancelLabel: "Close"
                                 );
                                 return;
                             }
@@ -1019,8 +1019,8 @@ public class LauncherController
         LauncherPatches.CloudSyncEnabled = pressed;
     }
 
-    // issue #81 — IProgress<T> 최소 구현. Report 는 배경 스레드(드레인 폴링/CloudSaveWriter)
-    // 에서 호출되므로, 콜백 내부에서 _runOnMainThread 로 메인스레드 마샬링을 하도록 넘긴다.
+    // issue #81 — Minimal implementation of IProgress<T>. Report is called from background threads (drain polling/CloudSaveWriter),
+    // so marshal to main thread using _runOnMainThread inside the callback.
     private sealed class MainThreadProgress : IProgress<(int done, int total)>
     {
         private readonly Action<(int done, int total)> _report;
@@ -1046,10 +1046,10 @@ public class LauncherController
                 _view.AppendLog("Pushing local saves to cloud...");
                 Task.Run(async () =>
                 {
-                    // issue #81 — 진행 단계(정리/반영)와 파일 카운트를 상태줄에 표시해
-                    // 대량 정리·업로드 중에도 프리징으로 오해받지 않게 한다. onPhase 가 단계
-                    // 문구를, progress 가 done/total 을 갱신한다(둘 다 메인스레드로 마샬).
-                    string phase = "클라우드 동기화 중";
+                    // issue #81 — Display progress stages (cleaning/reflecting) and file counts on the status line
+                    // so it's not mistaken for freezing during bulk cleanup/upload. onPhase updates stage
+                    // text and progress updates done/total (both marshalled to main thread).
+                    string phase = "Syncing with cloud";
                     var progress = new MainThreadProgress(p =>
                         _runOnMainThread(() => _view.SetStatus($"{phase}... {p.done}/{p.total}"))
                     );
@@ -1113,8 +1113,8 @@ public class LauncherController
                 _view.AppendLog("Pulling cloud saves to local...");
                 Task.Run(async () =>
                 {
-                    // issue #81 — push 와 동일하게 단계/카운트를 상태줄에 표시(프리징 오해 방지).
-                    string phase = "클라우드 동기화 중";
+                    // issue #81 — Display stages/counts on the status line just like push (to prevent freeze misunderstandings).
+                    string phase = "Syncing with cloud";
                     var progress = new MainThreadProgress(p =>
                         _runOnMainThread(() => _view.SetStatus($"{phase}... {p.done}/{p.total}"))
                     );
@@ -1166,26 +1166,25 @@ public class LauncherController
     }
 
     // issue #59 — boot-time choice for an expired saved token (fast path only,
-    // so exactly once per app launch). "다시 로그인" → login stage; "오프라인으로
-    // 계속" (or Android Back, which StyledDialog maps to Cancel) → the normal
+    // so exactly once per app launch). "Log in again" → login stage; "Continue
+    // offline" (or Android Back, which StyledDialog maps to Cancel) → the normal
     // launch stage. No re-prompt this session: auth-gated features show the
     // restart notice instead (BlockIfTokenExpired), since the fast path never
     // built a login-capable session to hand re-auth mid-flight.
     private void ShowTokenExpiredChoice()
     {
         var dialog = new StyledDialog(
-            "Steam 로그인이 만료되었습니다.\n"
-                + "다시 로그인하거나, 클라우드 동기화·창작마당 없이 오프라인으로 계속할 수 있습니다.",
+            "Steam login has expired.\n"
+                + "You can log in again, or continue offline without cloud sync and Workshop.",
             LauncherUI.ResolveScale(_view.RootControl),
-            okLabel: "다시 로그인",
-            cancelLabel: "오프라인으로 계속"
+            okLabel: "Log in again",
+            cancelLabel: "Continue offline"
         );
-        dialog.Confirmed += () =>
-            ShowLoginStage("Steam 로그인이 만료되었습니다. 다시 로그인해 주세요.");
+        dialog.Confirmed += () => ShowLoginStage("Steam login has expired. Please log in again.");
         dialog.Cancelled += () =>
         {
             PatchHelper.Log("[Issue59] Expired-token dialog: offline chosen");
-            _view.SetStatus("오프라인 모드 — 클라우드 동기화·창작마당은 재로그인 필요");
+            _view.SetStatus("Offline mode — Cloud sync and Workshop require re-login");
             ShowLaunchStage(ResolveLaunchButtonText(), showCloudSync: true, showUpdate: true);
         };
         _view.RootControl.AddChild(dialog);
@@ -1203,7 +1202,7 @@ public class LauncherController
         _ = SimpleResultDialog.ShowAsync(
             _view.RootControl,
             false,
-            "Steam 로그인이 만료되어 이 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.",
+            "Cannot use this feature because Steam login has expired.\nPlease restart the app and log in again.",
             LauncherUI.ResolveScale(_view.RootControl)
         );
         return true;
@@ -1217,9 +1216,9 @@ public class LauncherController
 
     private void OnLaunchPressed()
     {
-        // Issue #45: 브랜치 전환으로 PCK in-process 갱신이 있었다면 dst dll 과
-        // mismatch 위험 — Launch 대신 process 종료 (clean exit, recents 에서 사라짐).
-        // 사용자가 launcher 아이콘 재탭 시 GodotApp.setupAssemblies() 새 dll 복사.
+        // Issue #45: If there was a PCK in-process update due to a branch switch, there is a risk of
+        // mismatch with dst dll — terminate process instead of Launch (clean exit, disappears from recents).
+        // When the user re-taps the launcher icon, GodotApp.setupAssemblies() copies the new dll.
         if (_model.NeedsRestartAfterBranchSwitch)
         {
             PatchHelper.Log("[Launcher] Restart-required button tapped — exiting app");
@@ -1229,15 +1228,15 @@ public class LauncherController
         _model.Launch();
     }
 
-    // Issue #53: 인세션 게임 업데이트가 어셈블리를 교체했을 때 사용자에게 1줄 안내를
-    // 띄우고, 짧은 지연 후 자동 재시작한다. restartApp 은 AtlasWipe/ShaderWarmup/Quit
-    // 이 쓰는 것과 동일한 메커니즘 — 재부팅 시 Java setupAssemblies 가 새 sts2.dll 을
-    // dst 로 복사한 뒤 게임이 새 어셈블리로 부팅된다. 안내가 읽힐 시간을 주려 타이머
-    // (2s) 로 지연하되, 지연 중 PLAY 재진입을 막기 위해 액션 버튼은 숨긴다.
+    // Issue #53: When an in-session game update replaces the assembly, show a 1-line message to the user
+    // and auto-restart after a short delay. restartApp uses the exact same mechanism as AtlasWipe/ShaderWarmup/Quit
+    // — on reboot, Java setupAssemblies copies the new sts2.dll to dst, and then the game boots with the new assembly.
+    // Delayed with a timer (2s) to give time for the message to be read, while hiding the action buttons
+    // to prevent re-entering PLAY during the delay.
     private void PromptUpdateRestart()
     {
         _view.Actions.HideAll();
-        _view.SetStatus("업데이트 적용을 위해 재시작합니다...");
+        _view.SetStatus("Restarting to apply updates...");
         try
         {
             var timer = _view.RootControl.GetTree().CreateTimer(2.0);
@@ -1284,12 +1283,12 @@ public class LauncherController
         });
     }
 
-    // Issue #45: Play 버튼 라벨은 NeedsRestartAfterBranchSwitch 가 set 이면 한국어
-    // "앱 재시작 필요" 로 강제, 그 외에는 기존 InGameMode 로직 유지.
+    // Issue #45: Play button label forced to Korean "App restart required" if NeedsRestartAfterBranchSwitch is set,
+    // otherwise preserves existing InGameMode logic.
     private string ResolveLaunchButtonText()
     {
         if (_model.NeedsRestartAfterBranchSwitch)
-            return "앱 재시작 필요";
+            return "App restart required";
         return _model.InGameMode ? "PLAY" : "RESTART APP";
     }
 }

@@ -215,7 +215,9 @@ public static class FmodBankLoader
 
         if (!TryMaterializeBank(entry, destUserPath, out var materializeResult))
         {
-            PatchHelper.Log($"[FmodBank] {modId}/{fileName}: FAILED to materialize ({materializeResult})");
+            PatchHelper.Log(
+                $"[FmodBank] {modId}/{fileName}: FAILED to materialize ({materializeResult})"
+            );
             return false;
         }
 
@@ -405,7 +407,12 @@ public static class FmodBankLoader
     private static List<PckEntry> ListPckEntries(string pckPath)
     {
         var result = new List<PckEntry>();
-        using var fs = new FileStream(pckPath, FileMode.Open, System.IO.FileAccess.Read, FileShare.Read);
+        using var fs = new FileStream(
+            pckPath,
+            FileMode.Open,
+            System.IO.FileAccess.Read,
+            FileShare.Read
+        );
         using var br = new BinaryReader(fs, Encoding.UTF8, leaveOpen: true);
 
         if (fs.Length < 104)

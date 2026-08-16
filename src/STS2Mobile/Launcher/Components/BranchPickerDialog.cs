@@ -122,9 +122,9 @@ public class BranchPickerDialog : ColorRect
         helperRow.Alignment = BoxContainer.AlignmentMode.End;
         vbox.AddChild(helperRow);
 
-        var atlasButton = new StyledButton("이미지 캐시 정리", scale, fontSize: 11, height: 32);
+        var atlasButton = new StyledButton("Clear Image Cache", scale, fontSize: 11, height: 32);
         atlasButton.Modulate = new Color(0.7f, 0.7f, 0.75f);
-        atlasButton.TooltipText = "포션 / 카드 / 유물 이미지가 잘못 표시될 때 사용";
+        atlasButton.TooltipText = "Use when potion / card / relic images are displayed incorrectly";
         atlasButton.Pressed += () =>
         {
             QueueFree();

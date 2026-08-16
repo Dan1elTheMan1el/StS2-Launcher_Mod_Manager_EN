@@ -23,7 +23,7 @@ public class StyledButton : Button
     // (CloudConflictDialog, ProfilePickerDialog) reuse these as a floor for
     // their own compact-viewport shrink, so a short screen can never render a
     // dialog button/text smaller than what's already on the main screen
-    // (user report: "save manager 글자가 너무 작아").
+    // (user report: "save manager text is too small").
     public const int MainActionFontSize = 14;
     public const int MainActionHeight = 44;
 

@@ -31,7 +31,7 @@ public static class SaveDiagnosticPatches
         AppPaths.ExternalRoot + "/.repro_issue36_emptywrite";
     private static bool _reproFired;
 
-    // P0-2 (경량판) — set once this session if progress.save's load underwent
+    // P0-2 (Lightweight version) — set once this session if progress.save's load underwent
     // ANY form of recovery (lossy scavenge, or a hard failure that falls back
     // to ProgressState.CreateDefault() + an immediate re-save). Session-scoped
     // and sticky: only ever flips false→true (see LogLoadResult), never
@@ -247,7 +247,7 @@ public static class SaveDiagnosticPatches
                     + $"Error={error ?? "none"}"
             );
 
-            // P0-2 (경량판) — classify Status against MegaCrit.Sts2.Core.Saves.
+            // P0-2 (Lightweight version) — classify Status against MegaCrit.Sts2.Core.Saves.
             // ReadSaveStatus, decompiled from sts2.dll v0.108.0 (not guessed):
             // Success, JsonParseError, FileNotFound, FileEmpty, MigrationFailed,
             // MissingSchemaVersion, FutureVersion, VersionTooOld,

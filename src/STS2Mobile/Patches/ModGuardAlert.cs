@@ -120,7 +120,7 @@ public static class ModGuardAlert
             // issue #76 — the alert is entirely opt-in behind the launcher's
             // Debug toggle. Debug: OFF (the default) means this dialog NEVER
             // shows, crash-grade or not: owner's rule, for users knowingly
-            // running long-outdated mods ("살짝 깨져도 걍 쓰는" 모드) who don't want
+            // running long-outdated mods ("Mods that are used anyway even if slightly broken") who don't want
             // to be told about it. Attribution logging is untouched, so a
             // Debug: ON session (or a pulled logcat) still has everything.
             //
@@ -179,7 +179,7 @@ public static class ModGuardAlert
             vbox.AddThemeConstantOverride("separation", 18);
             panel.AddChild(vbox);
 
-            var title = new Label { Text = "모드 오류 감지" };
+            var title = new Label { Text = "Mod Error Detected" };
             title.AddThemeFontSizeOverride("font_size", 34);
             title.AddThemeColorOverride("font_color", new Color(0.95f, 0.6f, 0.45f));
             vbox.AddChild(title);
@@ -187,15 +187,15 @@ public static class ModGuardAlert
             var body = new Label
             {
                 Text =
-                    $"'{modName}' 모드에서 오류가 발생했습니다.\n"
+                    $"An error occurred in the '{modName}' mod.\n"
                     + $"({exceptionType})\n\n"
-                    + "게임은 계속 진행할 수 있지만, 문제가 반복되면\n"
-                    + "Mod Hub에서 해당 모드를 비활성화하세요.\n\n"
+                    + "You can continue playing, but if the issue persists,\n"
+                    + "please disable the mod in Mod Hub.\n\n"
                     // issue #76 — the dialog only appears in Debug: ON sessions,
                     // so it must say how to turn itself off. Users knowingly
                     // running outdated mods shouldn't have to hunt for it.
-                    + "이 알림을 보고 싶지 않으면\n"
-                    + "런처 화면 우측 상단의 Debug 토글을 OFF 하세요.",
+                    + "If you do not want to see this notification,\n"
+                    + "turn OFF the Debug toggle in the top right of the launcher screen.",
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 CustomMinimumSize = new Vector2(680, 0),
             };
@@ -203,7 +203,7 @@ public static class ModGuardAlert
             vbox.AddChild(body);
 
             var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
-            var ok = new Button { Text = "확인", CustomMinimumSize = new Vector2(220, 68) };
+            var ok = new Button { Text = "Confirm", CustomMinimumSize = new Vector2(220, 68) };
             ok.AddThemeFontSizeOverride("font_size", 26);
             ok.Pressed += () => layer.QueueFree();
             row.AddChild(ok);

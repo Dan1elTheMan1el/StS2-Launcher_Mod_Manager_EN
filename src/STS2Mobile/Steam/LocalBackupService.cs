@@ -77,7 +77,7 @@ public static class LocalBackupService
                 {
                     Success = false,
                     NeedsPermission = true,
-                    Error = "저장소 권한이 없습니다.",
+                    Error = "No storage permission.",
                 };
 
             var local = new GodotFileIo(UserDataPathProvider.GetAccountScopedBasePath(null));
@@ -88,7 +88,7 @@ public static class LocalBackupService
             {
                 TryDeleteDir(setDir); // no non-empty saves — don't leave an empty folder
                 PatchHelper.Log($"{Tag} manual: no non-empty saves found, skipped");
-                return new BackupResult { Success = false, Error = "백업할 세이브가 없습니다." };
+                return new BackupResult { Success = false, Error = "No saves to backup." };
             }
 
             PatchHelper.Log($"{Tag} manual OK: {count} files, {bytes}B → {setDir}");
@@ -585,11 +585,11 @@ public static class LocalBackupService
                 {
                     Success = false,
                     NeedsPermission = true,
-                    Error = "저장소 권한이 없습니다.",
+                    Error = "No storage permission.",
                 };
 
             if (string.IsNullOrEmpty(setRoot) || !Directory.Exists(setRoot))
-                return new RestoreResult { Success = false, Error = "백업을 찾을 수 없습니다." };
+                return new RestoreResult { Success = false, Error = "Backup not found." };
 
             var preRestore = BackupNow();
             if (!preRestore.Success)
@@ -649,7 +649,8 @@ public static class LocalBackupService
                     FileCount = count,
                     TotalBytes = bytes,
                     PreRestoreBackupPath = preRestore.DestPath,
-                    Error = $"{failCount}/{total}개 파일 복원 실패. 복원 직전 백업: {preRestore.DestPath}",
+                    Error =
+                        $"Failed to restore {failCount}/{total} files. Pre-restore backup: {preRestore.DestPath}",
                 };
             }
 

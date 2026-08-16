@@ -19,7 +19,9 @@ public class SimpleResultDialog : ColorRect
     // :795-807), just for the single Closed event instead of Confirmed/Cancelled.
     public static Task ShowAsync(Node parent, bool success, string message, float scale)
     {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var dialog = new SimpleResultDialog(success, message, scale);
         dialog.Closed += () => tcs.TrySetResult(true);
         parent.AddChild(dialog);
@@ -47,7 +49,7 @@ public class SimpleResultDialog : ColorRect
         vbox.AddThemeConstantOverride("separation", (int)(16 * scale));
         dialogBox.AddChild(vbox);
 
-        var title = new StyledLabel(success ? "완료" : "실패", scale, fontSize: 20);
+        var title = new StyledLabel(success ? "Complete" : "Failed", scale, fontSize: 20);
         vbox.AddChild(title);
 
         // Same fixed-buttons + scrolling-body house rule as StyledDialog — these
@@ -84,7 +86,7 @@ public class SimpleResultDialog : ColorRect
         buttonRow.Alignment = BoxContainer.AlignmentMode.Center;
         vbox.AddChild(buttonRow);
 
-        var okButton = new StyledButton("확인", scale, fontSize: 14, height: 44);
+        var okButton = new StyledButton("OK", scale, fontSize: 14, height: 44);
         okButton.CustomMinimumSize = new Vector2((int)(140 * scale), okButton.CustomMinimumSize.Y);
         okButton.Pressed += () =>
         {
