@@ -8,7 +8,7 @@ using STS2Mobile.Steam;
 
 namespace STS2Mobile.Launcher.Components;
 
-// Issue #64: snapshot picker for the "백업 복원" flow. Unlike ProfileCopyPickerDialog
+// Issue #64: snapshot picker for the "Restore Backup" flow. Unlike ProfileCopyPickerDialog
 // (bounded at 6 rows), manual backup sets are never auto-evicted (LocalBackupService's
 // FIFO cap only prunes auto/ — see LocalBackupService.cs "Manual sets are never
 // auto-evicted"), so this list can grow without bound. Wrapped in a ScrollContainer
