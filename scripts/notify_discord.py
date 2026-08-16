@@ -43,7 +43,12 @@ def main() -> int:
 
     body = json.dumps({"content": content}).encode("utf-8")
     req = urllib.request.Request(
-        webhook_url, data=body, headers={"Content-Type": "application/json"}
+        webhook_url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; sts2-translate-bot/1.0)",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
