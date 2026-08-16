@@ -111,6 +111,20 @@ def main() -> int:
         capture_output=True, text=True, check=True,
     )
     print(f"\nDone: {view.stdout.strip()}")
+
+    # --- Updated Merge & Cleanup Section ---
+    target_branch = "main"
+    print(f"\nStashing any local formatting changes...")
+    subprocess.run(["git", "stash"], capture_output=True)  # Safely stash local edits
+
+    print(f"Merging '{branch}' into '{target_branch}' ...")
+    run(["git", "checkout", target_branch])
+    run(["git", "pull", "origin", target_branch])
+    run(["git", "merge", branch, "--no-ff", "-m", f"Merge translation branch {branch}"])
+    run(["git", "push", "origin", target_branch])
+
+    print(f"Deleting remote translation branch '{branch}' ...")
+    run(["git", "push", "origin", "--delete", branch])
     return 0
 
 
