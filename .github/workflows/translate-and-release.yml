@@ -1,0 +1,134 @@
+name: Translate release and re-publish
+
+# Fires whenever a new release is published on this repo (e.g. after you
+# merge/sync a new upstream release into your fork and tag it). You can
+# also trigger it manually from the Actions tab to test against any tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to translate (defaults to latest release if omitted)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine ref
+        id: ref
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "ref=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Korean -> English translation pass (code)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 scripts/translate_korean.py --repo-root .
+
+      - name: Commit translated strings
+        id: commit
+        run: |
+          git config user.name "translation-bot"
+          git config user.email "translation-bot@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git checkout -b "translate/${{ steps.ref.outputs.ref }}"
+            git add -A
+            git commit -m "Auto-translate Korean strings to English for ${{ steps.ref.outputs.ref }}"
+            git push origin "translate/${{ steps.ref.outputs.ref }}" --force
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Release notes are translated even if no code files changed (e.g. a
+      # release with only doc/text changes) — gated on this being a real
+      # `release` event, since workflow_dispatch runs have no release body.
+      - name: Translate release notes/title
+        if: github.event_name == 'release'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+        run: |
+          python3 scripts/translate_korean.py --translate-release
+
+      - name: Ensure release-notes files exist
+        id: notes
+        run: |
+          mkdir -p .
+          touch translated_notes.md translated_title.txt
+          {
+            echo "title<<EOF"
+            cat translated_title.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------
+      # BUILD STAGE (placeholder)
+      #
+      # This is where `bash scripts/build.sh` would run to produce the APK.
+      # It's stubbed out because the upstream build needs binaries that
+      # aren't in this repo and can't be redistributed (custom Godot
+      # engine build, FMOD SDK, Spine runtime, and the game's own files
+      # from Steam). Once you have those available to a runner — either a
+      # self-hosted runner with them pre-installed, or private storage the
+      # job can fetch with a secret — replace this step with the real
+      # build invocation, upload the APK as a release asset here, and you
+      # can drop the manual finish_release.py step entirely.
+      # ------------------------------------------------------------------
+      - name: Build (not yet configured)
+        run: |
+          echo "Build stage is not configured — see comments in this workflow file."
+          echo "Publishing a translated pre-release; attach the APK with scripts/finish_release.py."
+
+      - name: Publish translated pre-release
+        if: steps.commit.outputs.changed == 'true' || github.event_name == 'release'
+        id: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.ref.outputs.ref }}-en"
+          name: "[NEEDS BUILD] ${{ steps.ref.outputs.ref }}${{ steps.notes.outputs.title && format(' — {0}', steps.notes.outputs.title) || '' }}"
+          body_path: translated_notes.md
+          # prerelease keeps this out of "latest" so update-watchers like
+          # Obtainium (which ignores prereleases by default) don't try to
+          # offer it to anyone until an APK is actually attached and
+          # finish_release.py flips this flag off.
+          prerelease: true
+          target_commitish: >-
+            ${{ steps.commit.outputs.changed == 'true'
+                && format('translate/{0}', steps.ref.outputs.ref)
+                || steps.ref.outputs.ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Discord
+        if: steps.publish.outcome == 'success'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_URL: ${{ steps.publish.outputs.url }}
+          RELEASE_TAG: "${{ steps.ref.outputs.ref }}-en"
+          SOURCE_TAG: ${{ steps.ref.outputs.ref }}
+        run: |
+          python3 scripts/notify_discord.py
