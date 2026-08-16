@@ -16,7 +16,7 @@ public enum CloudConflictChoice
 
 // Modal shown on first PLAY when local and cloud progress.save snapshots differ.
 // Two side-by-side summary cards; the more recent one is highlighted with a
-// colored border and a "최근" badge so the user can tell at a glance which
+// colored border and a "Recent" badge so the user can tell at a glance which
 // copy reflects their latest play. Choice resolves a TaskCompletionSource so
 // the launcher can await the user's decision before continuing into the game.
 public class CloudConflictDialog : ColorRect
@@ -271,7 +271,7 @@ public class CloudConflictDialog : ColorRect
         _result.TrySetResult(choice);
     }
 
-    // Highlights the recommended button. Slight green tint mirrors the "최근"
+    // Highlights the recommended button. Slight green tint mirrors the "Recent"
     // badge color so the user can pattern-match the highlight to the side
     // marked as "more recent" without re-reading the cards.
     private static void EmphasizeButton(StyledButton btn, float scale)

@@ -455,7 +455,7 @@ public static class LauncherPatches
     // reachable — loops a small static menu (LocalOnlyMenuDialog) instead of the
     // per-slot ProfilePickerDialog, since there's no cloud comparison to show.
     // cloudStore is passed as null to ProfileCopyFlow, which skips its own
-    // "클라우드에도 반영할까요?" step entirely in that case (§3-2/3-3 step 7 bypass).
+    // "Would you like to reflect this to the cloud as well?" step entirely in that case (§3-2/3-3 step 7 bypass).
     private static async Task RunLocalOnlyMenuAsync(Node parent, ISaveStore localStore)
     {
         while (true)
@@ -924,7 +924,7 @@ public static class LauncherPatches
         //    to align local mtime with cloud's, otherwise local mtime = NOW
         //    (file write timestamp) and cloud mtime stays at original cloud
         //    value, leaving the next launch with a permanent mtime asymmetry
-        //    that re-triggers conflict and points the "최근" badge at the
+        //    that re-triggers conflict and points the "Recent" badge at the
         //    wrong side.
         // 3. After cloud writes (KeepLocal branch), align local mtime to NOW
         //    too — SteamKit2CloudSaveStore.WriteFile sets cloud mtime to NOW

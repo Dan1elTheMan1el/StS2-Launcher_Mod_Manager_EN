@@ -32,8 +32,8 @@ public class LauncherModel : IDisposable
     public volatile bool ConnectionResolved;
     public volatile bool AwaitingCode;
 
-    // Issue #45: 브랜치 전환으로 PCK 가 in-process 갱신되면 dst dll 과 mismatch
-    // — process restart 필요. LauncherUI 가 이걸 보고 Play→Restart 분기.
+    // Issue #45: When PCK is updated in-process due to branch switching, it mismatches with the dst dll
+    // — process restart is required. LauncherUI looks at this to branch Play→Restart.
     internal volatile bool NeedsRestartAfterBranchSwitch;
 
     // True when launched from GameStartupWrapper (game files present). False in
@@ -658,7 +658,7 @@ public class LauncherModel : IDisposable
                 Directory.Delete(gameDir, recursive: true);
             if (Directory.Exists(stateDir))
                 Directory.Delete(stateDir, recursive: true);
-            // 다음 다운로드에서 새 stamp 가 작성되도록 기존 stamp 도 함께 삭제.
+            // Also delete the existing stamp so that a new stamp is written in the next download.
             CacheStamp.Delete();
             PatchHelper.Log("[Launcher] Game files wiped");
         }

@@ -78,7 +78,7 @@ public class CloudSyncOverlay : Control
             .CallDeferred();
     }
 
-    // Drives the "클라우드 백업 중 n/전체" phase. Reported once per cloud file as the
+    // Drives the "Backing up cloud n/total" phase. Reported once per cloud file as the
     // discarded tree downloads serially, so the bar and count actually move and the
     // screen never looks frozen. Progress callbacks arrive on a background thread —
     // defer the UI mutation onto the main thread.
